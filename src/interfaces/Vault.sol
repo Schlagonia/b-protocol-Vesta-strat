@@ -70,9 +70,11 @@ interface IVault is IERC20 {
         external
         returns (uint256);
 
-    function withdraw(uint256 maxShares, address recipient, uint256 maxLoss)
-        external
-        returns (uint256);
+    function withdraw(
+        uint256 maxShares,
+        address recipient,
+        uint256 maxLoss
+    ) external returns (uint256);
 
     function token() external view returns (address);
 

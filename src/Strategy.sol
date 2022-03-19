@@ -43,7 +43,7 @@ contract Strategy is BaseStrategy {
     // Uniswap v3 router
     ISwapRouter internal constant router =
         ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
-    
+
     // 100%
     uint256 internal constant MAX_BPS = 10000;
 
@@ -258,7 +258,11 @@ contract Strategy is BaseStrategy {
     }
 
     function _sellLQTYforDAI() internal {
-        _checkAllowance(address(router), address(LQTY), LQTY.balanceOf(address(this)));
+        _checkAllowance(
+            address(router),
+            address(LQTY),
+            LQTY.balanceOf(address(this))
+        );
 
         bytes memory path = abi.encodePacked(
             address(LQTY), // LQTY-ETH
@@ -286,9 +290,9 @@ contract Strategy is BaseStrategy {
         uint256 _ethBalance = address(this).balance;
 
         // Balance * Price * Swap Percentage (adjusted to 18 decimals)
-        uint256 _minExpected = (_ethBalance
-            * _ethUSD
-            * minExpectedSwapPercentage) / (MAX_BPS * 1e18);
+        uint256 _minExpected = (_ethBalance *
+            _ethUSD *
+            minExpectedSwapPercentage) / (MAX_BPS * 1e18);
 
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
             .ExactInputSingleParams(
@@ -326,9 +330,15 @@ contract Strategy is BaseStrategy {
         address _token,
         uint256 _amount
     ) internal {
-        uint256 _currentAllowance = IERC20(_token).allowance(address(this), _contract);
+        uint256 _currentAllowance = IERC20(_token).allowance(
+            address(this),
+            _contract
+        );
         if (_currentAllowance < _amount) {
-            IERC20(_token).safeIncreaseAllowance(_contract, _amount - _currentAllowance);
+            IERC20(_token).safeIncreaseAllowance(
+                _contract,
+                _amount - _currentAllowance
+            );
         }
     }
 
@@ -384,5 +394,4 @@ contract Strategy is BaseStrategy {
     {
         minExpectedSwapPercentage = _minExpectedSwapPercentage;
     }
-
 }
