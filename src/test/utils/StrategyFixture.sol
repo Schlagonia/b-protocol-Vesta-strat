@@ -23,7 +23,8 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
     // we use custom names that are unlikely to cause collisions so this contract
     // can be inherited easily
     // TODO: see if theres a better way to use this
-    Vm public constant vm_std_cheats = Vm(address(uint160(uint256(keccak256('hevm cheat code')))));
+    Vm public constant vm_std_cheats =
+        Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     IVault public vault;
     Strategy public strategy;
@@ -35,7 +36,9 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         IERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F);
     IERC20 public constant WETH =
         IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
-    address public whale = 0x5d3a536E4D6DbD6114cc1Ead35777bAB948E3643;
+    IERC20 public constant LUSD =
+        IERC20(0x5f98805A4E8be255a32880FDeC7F6728C6568bA0);
+    address public whale = 0x5f98805A4E8be255a32880FDeC7F6728C6568bA0; // OlympusDAO treasury
     address public user = address(1337);
     address public strategist = address(1);
     uint256 public constant WETH_AMT = 10**18;
@@ -44,7 +47,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         weth = WETH;
 
         // replace with your token
-        want = DAI;
+        want = LUSD;
 
         deployVaultAndStrategy(
             address(want),

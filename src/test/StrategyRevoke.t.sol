@@ -18,6 +18,8 @@ contract StrategyRevokeTest is StrategyFixture {
         vault.deposit(_amount);
         skip(1);
         strategy.harvest();
+        skip(1);
+        strategy.harvest();
         assertEq(strategy.estimatedTotalAssets(), _amount);
 
         // In order to pass these tests, you will need to implement prepareReturn.

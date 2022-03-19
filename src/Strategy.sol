@@ -12,11 +12,17 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 // Import interfaces for many popular DeFi projects, or add your own!
-//import "../interfaces/<protocol>/<Interface>.sol";
+//import "./interfaces/<protocol>/<Interface>.sol";
+import "./interfaces/BProtocol/IBAMM.sol";
+import "./interfaces/Liquity/IStabilityPool.sol";
 
 contract Strategy is BaseStrategy {
     using SafeERC20 for IERC20;
     using Address for address;
+
+    IBAMM public constant bProtocolPool =
+        IBAMM(0x00FF66AB8699AAfa050EE5EF5041D1503aa0849a);
+    IStabilityPool public constant liquityStabilityPool = IStabilityPool(0x66017D22b0f8556afDd19FC67041899Eb65a21bb);
 
     // solhint-disable-next-line no-empty-blocks
     constructor(address _vault) BaseStrategy(_vault) {
@@ -29,13 +35,11 @@ contract Strategy is BaseStrategy {
     // ******** OVERRIDE THESE METHODS FROM BASE CONTRACT ************
 
     function name() external view override returns (string memory) {
-        // Add your own name here, suggestion e.g. "StrategyCreamYFI"
-        return "Strategy<ProtocolName><TokenType>";
+        return "StrategyBProtocolLiquityLUSD";
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
-        // TODO: Build a more accurate estimate using the value of all positions in terms of `want`
-        return want.balanceOf(address(this));
+        return balanceOfWant() + valueOfPoolTokens();
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -55,8 +59,19 @@ contract Strategy is BaseStrategy {
 
     // solhint-disable-next-line no-empty-blocks
     function adjustPosition(uint256 _debtOutstanding) internal override {
-        // TODO: Do something to invest excess `want` tokens (from the Vault) into your positions
-        // NOTE: Try to adjust positions so that `_debtOutstanding` can be freed up on *next* harvest (not immediately)
+        uint256 _liquidWant = balanceOfWant();
+
+        if (_liquidWant > _debtOutstanding) {
+            uint256 _amountToDeposit = _liquidWant - _debtOutstanding;
+
+            _checkAllowance(
+                address(bProtocolPool),
+                address(want),
+                _amountToDeposit
+            );
+
+            bProtocolPool.deposit(_amountToDeposit);
+        }
     }
 
     function liquidatePosition(uint256 _amountNeeded)
@@ -137,5 +152,45 @@ contract Strategy is BaseStrategy {
     {
         // TODO create an accurate price oracle
         return _amtInWei;
+    }
+
+    // ---------- HELPER & UTILITY FUNCTIONS ------------
+
+    // _checkAllowance adapted from https://github.com/therealmonoloco/liquity-stability-pool-strategy/blob/1fb0b00d24e0f5621f1e57def98c26900d551089/contracts/Strategy.sol#L316
+
+    function _checkAllowance(
+        address _contract,
+        address _token,
+        uint256 _amount
+    ) internal {
+        if (IERC20(_token).allowance(address(this), _contract) < _amount) {
+            IERC20(_token).safeApprove(_contract, _amount);
+        }
+    }
+
+    function balanceOfWant() public view returns (uint256) {
+        return want.balanceOf(address(this));
+    }
+
+    function balanceOfPoolTokens() public view returns (uint256) {
+        return IERC20(address(bProtocolPool)).balanceOf(address(this)); // Pool is not fully ERC-20 compatible (there's no transfer function), but balanceOf should be fine.
+    }
+
+    function valueOfPoolTokens() public view returns (uint256) {
+        uint256 _poolTokenBalance = balanceOfPoolTokens();
+
+        uint256 _valuePerPoolToken = (totalValueInBProtocolPool() * 1e18) / IERC20(address(bProtocolPool)).totalSupply();
+
+        return (_poolTokenBalance * _valuePerPoolToken) / 1e18;
+    }
+
+    // Returns the total amount of value, in want (LUSD), in the B.Protocol pool
+    function totalValueInBProtocolPool() public view returns (uint256) {
+        uint256 _wantOwnedByBProtocolPool = liquityStabilityPool.getCompoundedLUSDDeposit(address(bProtocolPool));
+        uint256 _ethOwnedByBProtocolPool = liquityStabilityPool.getDepositorETHGain(address(bProtocolPool)) + address(bProtocolPool).balance;
+        uint256 _ethPrice = bProtocolPool.fetchPrice();
+        require(_ethOwnedByBProtocolPool == 0 || _ethPrice > 0, "!oracle_working");
+
+        return _wantOwnedByBProtocolPool + ((_ethOwnedByBProtocolPool * _ethPrice) / 1e18);
     }
 }
