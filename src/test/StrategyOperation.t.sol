@@ -40,7 +40,7 @@ contract StrategyOperationsTest is StrategyFixture {
         skip(60 * 3); // skip 3 minutes
         // harvest
         strategy.harvest();
-        assertEq(strategy.estimatedTotalAssets(), _amount);
+        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100); // 1 / 1e16 LUSD margin
         // tend
         strategy.tend();
 
