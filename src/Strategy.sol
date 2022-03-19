@@ -65,6 +65,9 @@ contract Strategy is BaseStrategy {
         healthCheck = 0xDDCea799fF1699e98EDF118e0629A974Df7DF012;
     }
 
+    // B.Protocol needs to send ETH
+    receive() external payable {}
+
     // ******** OVERRIDE THESE METHODS FROM BASE CONTRACT ************
 
     function name() external view override returns (string memory) {
@@ -323,8 +326,9 @@ contract Strategy is BaseStrategy {
         address _token,
         uint256 _amount
     ) internal {
-        if (IERC20(_token).allowance(address(this), _contract) < _amount) {
-            IERC20(_token).safeApprove(_contract, _amount);
+        uint256 _currentAllowance = IERC20(_token).allowance(address(this), _contract);
+        if (_currentAllowance < _amount) {
+            IERC20(_token).safeIncreaseAllowance(_contract, _amount - _currentAllowance);
         }
     }
 
@@ -351,7 +355,7 @@ contract Strategy is BaseStrategy {
     }
 
     function ethPrice() public view returns (uint256 _ethPrice) {
-        uint256 _ethPrice = bProtocolPool.fetchPrice();
+        _ethPrice = bProtocolPool.fetchPrice();
         require(_ethPrice > 0, "!oracle_working");
     }
 

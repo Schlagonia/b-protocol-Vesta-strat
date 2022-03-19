@@ -20,7 +20,7 @@ contract StrategyRevokeTest is StrategyFixture {
         strategy.harvest();
         skip(1);
         strategy.harvest();
-        assertEq(strategy.estimatedTotalAssets(), _amount);
+        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
 
         // In order to pass these tests, you will need to implement prepareReturn.
         // TODO: uncomment the following lines.
@@ -39,7 +39,7 @@ contract StrategyRevokeTest is StrategyFixture {
         vault.deposit(_amount);
         skip(1);
         strategy.harvest();
-        assertEq(strategy.estimatedTotalAssets(), _amount);
+        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
 
         strategy.setEmergencyExit();
         skip(1);

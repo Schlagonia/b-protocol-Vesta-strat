@@ -28,7 +28,7 @@ contract StrategyShutdownTest is StrategyFixture {
         skip(3600 * 7);
         vm_std_cheats.roll(block.number + 1);
         strategy.harvest();
-        assertEq(strategy.estimatedTotalAssets(), _amount);
+        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
 
         // Set Emergency
         vault.setEmergencyShutdown(true);
@@ -54,7 +54,7 @@ contract StrategyShutdownTest is StrategyFixture {
         skip(1 days);
         vm_std_cheats.roll(block.number + 100);
         strategy.harvest();
-        assertEq(strategy.estimatedTotalAssets(), _amount);
+        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
 
         // Earn interest
         skip(1 days);

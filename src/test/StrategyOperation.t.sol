@@ -27,7 +27,7 @@ contract StrategyOperationsTest is StrategyFixture {
 
     /// Test Operations
     function testStrategyOperation(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.1 ether && _amount < 10e18);
+        vm_std_cheats.assume(_amount > 1 ether && _amount < 10e18);
 
         uint256 balanceBefore = want.balanceOf(address(user));
         vm_std_cheats.prank(user);
@@ -44,10 +44,11 @@ contract StrategyOperationsTest is StrategyFixture {
         // tend
         strategy.tend();
 
+        uint256 _userVaultBalance = vault.balanceOf(user);
         vm_std_cheats.prank(user);
-        vault.withdraw();
+        vault.withdraw(_userVaultBalance, user, 1000);
 
-        assertEq(want.balanceOf(user), balanceBefore);
+        assertApproxEq(want.balanceOf(user), balanceBefore, 100);
     }
 
     function testEmergencyExit(uint256 _amount) public {
@@ -60,7 +61,7 @@ contract StrategyOperationsTest is StrategyFixture {
         vault.deposit(_amount);
         skip(1);
         strategy.harvest();
-        assertEq(strategy.estimatedTotalAssets(), _amount);
+        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
 
         // set emergency and exit
         strategy.setEmergencyExit();
@@ -82,7 +83,7 @@ contract StrategyOperationsTest is StrategyFixture {
         // Harvest 1: Send funds through the strategy
         skip(1);
         strategy.harvest();
-        assertEq(strategy.estimatedTotalAssets(), _amount);
+        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
 
         // TODO: Add some code before harvest #2 to simulate earning yield
 

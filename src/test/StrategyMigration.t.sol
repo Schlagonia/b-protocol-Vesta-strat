@@ -24,12 +24,12 @@ contract StrategyMigrationTest is StrategyFixture {
         vault.deposit(_amount);
         skip(1);
         strategy.harvest();
-        assertEq(strategy.estimatedTotalAssets(), _amount);
+        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
 
         // Migrate to a new strategy
         vm_std_cheats.prank(strategist);
         address newStrategyAddr = deployStrategy(address(vault));
         vault.migrateStrategy(address(strategy), newStrategyAddr);
-        assertEq(Strategy(newStrategyAddr).estimatedTotalAssets(), _amount);
+        assertEq(Strategy(payable(newStrategyAddr)).estimatedTotalAssets(), _amount);
     }
 }

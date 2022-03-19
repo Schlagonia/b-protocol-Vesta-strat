@@ -127,7 +127,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
 
         vm_std_cheats.prank(_strategist);
         _strategy = deployStrategy(_vault);
-        strategy = Strategy(_strategy);
+        strategy = Strategy(payable(_strategy));
 
         vm_std_cheats.prank(_strategist);
         strategy.setKeeper(_keeper);
