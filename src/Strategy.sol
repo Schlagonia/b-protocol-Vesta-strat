@@ -26,7 +26,7 @@ contract Strategy is BaseStrategy {
     IBAMM public constant bProtocolPool =
         IBAMM(0x00FF66AB8699AAfa050EE5EF5041D1503aa0849a);
     IStabilityPool public constant liquityStabilityPool =
-        IStabilityPool(0x66017D22b0f8556afDd19FC67041899Eb65a21bb); // Dummy comment
+        IStabilityPool(0x66017D22b0f8556afDd19FC67041899Eb65a21bb); // Dummy 
 
     // DAI - Used for swaps routing
     IERC20 internal constant DAI =
