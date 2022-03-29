@@ -24,10 +24,11 @@ contract StrategyRevokeTest is StrategyFixture {
 
         // In order to pass these tests, you will need to implement prepareReturn.
         // TODO: uncomment the following lines.
-        // vault.revokeStrategy(address(strategy));
-        // skip(1);
-        // strategy.harvest();
-        // assertEq(want.balanceOf(address(vault)), _amount);
+        vault.revokeStrategy(address(strategy));
+        skip(1);
+        strategy.harvest();
+
+        assertApproxEq(want.balanceOf(address(vault)), _amount, _amount * 1 * 1e18 / 10000);
     }
 
     function testRevokeStrategyFromStrategy(uint256 _amount) public {
@@ -44,6 +45,6 @@ contract StrategyRevokeTest is StrategyFixture {
         strategy.setEmergencyExit();
         skip(1);
         strategy.harvest();
-        assertEq(want.balanceOf(address(vault)), _amount);
+        assertApproxEq(want.balanceOf(address(vault)), _amount, _amount * 1 * 1e18 / 10000); // Allow one bip
     }
 }

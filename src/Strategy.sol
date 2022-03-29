@@ -1,34 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0
-// Feel free to change the license, but this is what we use
 
 pragma solidity ^0.8.12;
 pragma experimental ABIEncoderV2;
 
-// These are the core Yearn libraries
-import {BaseStrategy, StrategyParams} from "@yearnvaults/contracts/BaseStrategy.sol";
+import {BaseStrategyInitializable} from "@yearnvaults/contracts/BaseStrategy.sol";
 
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
-// Import interfaces for many popular DeFi projects, or add your own!
-//import "./interfaces/<protocol>/<Interface>.sol";
 import "./interfaces/BProtocol/IBAMM.sol";
 import "./interfaces/Liquity/IStabilityPool.sol";
 import "./interfaces/Curve/StableSwapExchange.sol";
 import "./interfaces/Uniswap/ISwapRouter.sol";
 
-contract Strategy is BaseStrategy {
+contract Strategy is BaseStrategyInitializable {
     using SafeERC20 for IERC20;
     using Address for address;
 
     IBAMM public constant bProtocolPool =
         IBAMM(0x00FF66AB8699AAfa050EE5EF5041D1503aa0849a);
     IStabilityPool public constant liquityStabilityPool =
-        IStabilityPool(0x66017D22b0f8556afDd19FC67041899Eb65a21bb); // Dummy 
+        IStabilityPool(0x66017D22b0f8556afDd19FC67041899Eb65a21bb); 
 
-    // DAI - Used for swaps routing
+    // DAI used for swaps routing
     IERC20 internal constant DAI =
         IERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F);
     IERC20 internal constant LQTY =
@@ -54,8 +50,7 @@ contract Strategy is BaseStrategy {
     uint24 public ethToDaiFee;
     uint24 public lqtyToEthFee;
 
-    // solhint-disable-next-line no-empty-blocks
-    constructor(address _vault) BaseStrategy(_vault) {
+    constructor(address _vault) BaseStrategyInitializable(_vault) {
         ethToDaiFee = 3000;
         lqtyToEthFee = 3000;
 
@@ -63,19 +58,28 @@ contract Strategy is BaseStrategy {
         minExpectedSwapPercentage = 9900;
 
         healthCheck = 0xDDCea799fF1699e98EDF118e0629A974Df7DF012;
+
+        want.safeApprove(address(bProtocolPool), type(uint256).max); // All want will be in pool, so this doesn't add sec risk
     }
-
-    // B.Protocol needs to send ETH
-    receive() external payable {}
-
-    // ******** OVERRIDE THESE METHODS FROM BASE CONTRACT ************
 
     function name() external view override returns (string memory) {
         return "StrategyBProtocolLiquityLUSD";
     }
 
+    // B.Protocol needs to send ETH to strat
+    receive() external payable {}    
+
     function estimatedTotalAssets() public view override returns (uint256) {
         return balanceOfWant() + valueOfPoolTokens();
+    }
+
+    function adjustPosition(uint256 _debtOutstanding) internal override {
+        uint256 _liquidWant = balanceOfWant();
+
+        if (_liquidWant > _debtOutstanding) {
+            uint256 _amountToDeposit = _liquidWant - _debtOutstanding;
+            bProtocolPool.deposit(_amountToDeposit);
+        }
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -86,57 +90,31 @@ contract Strategy is BaseStrategy {
             uint256 _loss,
             uint256 _debtPayment
         )
-    // solhint-disable-next-line no-empty-blocks
     {
-        // First, claim & sell any LQTY.
+        // Claim & sell any LQTY.
 
-        _sellAvailableRewards();
+        _claimAndSellAvailableRewards();
 
-        // Second, run initial profit + loss calculations.
+        // Liquidate position so that everything is in want
 
-        uint256 _totalAssets = estimatedTotalAssets();
+        liquidateAllPositions();
+
+        // Run profit, loss, & debt payment calcs
+
+        uint256 _totalAssets = balanceOfWant();
         uint256 _totalDebt = vault.strategies(address(this)).totalDebt;
 
         if (_totalAssets >= _totalDebt) {
-            // Implicitly, _profit & _loss are 0 before we change them.
+            _debtPayment = _debtOutstanding;
             _profit = _totalAssets - _totalDebt;
         } else {
+            _debtPayment = Math.min(_debtOutstanding, _totalAssets);
             _loss = _totalDebt - _totalAssets;
         }
 
-        // Third, free up _debtOutstanding + our profit, and make any necessary adjustments to the accounting.
+        // Invest anything other than debt payment & profit 
 
-        (uint256 _amountFreed, uint256 _liquidationLoss) = liquidatePosition(
-            _debtOutstanding + _profit
-        );
-
-        _loss = _loss + _liquidationLoss;
-
-        _debtPayment = Math.min(_debtOutstanding, _amountFreed);
-
-        if (_loss > _profit) {
-            _loss = _loss - _profit;
-            _profit = 0;
-        } else {
-            _profit = _profit - _loss;
-            _loss = 0;
-        }
-    }
-
-    function adjustPosition(uint256 _debtOutstanding) internal override {
-        uint256 _liquidWant = balanceOfWant();
-
-        if (_liquidWant > _debtOutstanding) {
-            uint256 _amountToDeposit = _liquidWant - _debtOutstanding;
-
-            _checkAllowance(
-                address(bProtocolPool),
-                address(want),
-                _amountToDeposit
-            );
-
-            bProtocolPool.deposit(_amountToDeposit);
-        }
+        adjustPosition(_debtPayment + _profit);
     }
 
     function liquidatePosition(uint256 _amountNeeded)
@@ -146,7 +124,6 @@ contract Strategy is BaseStrategy {
     {
         // Maintains invariant `want.balanceOf(this) >= _liquidatedAmount`
         // Maintains invariant `_liquidatedAmount + _loss <= _amountNeeded`
-        _amountNeeded = Math.min(_amountNeeded, estimatedTotalAssets()); // This makes it safe to request to liquidate more than we have
 
         uint256 _liquidWant = balanceOfWant();
 
@@ -154,13 +131,10 @@ contract Strategy is BaseStrategy {
             return (_amountNeeded, 0);
         }
 
-        uint256 _wantToWithdraw = _amountNeeded - _liquidWant;
+        bProtocolPool.withdraw(balanceOfPoolTokens());
+        _sellAvailableETH();
 
-        uint256 _sharesToWithdraw = (_wantToWithdraw * 1e18) /
-            wantValuePerPoolToken();
-
-        bProtocolPool.withdraw(_sharesToWithdraw);
-        _sellAvailableETH(); // Withdrawing will sometimes give us some ETH if B.Protocol hasn't already rebalanced it away
+        adjustPosition(_amountNeeded);
 
         _liquidWant = balanceOfWant();
 
@@ -177,53 +151,31 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256 _amountFreed)
     {
-        (_amountFreed, ) = liquidatePosition(estimatedTotalAssets());
-    }
+        bProtocolPool.withdraw(balanceOfPoolTokens());
+        _sellAvailableETH();
 
-    // NOTE: Can override `tendTrigger` and `harvestTrigger` if necessary
-    // solhint-disable-next-line no-empty-blocks
+        return balanceOfWant();
+    }
+    
     function prepareMigration(address _newStrategy) internal override {
-        // TODO: Transfer any non-`want` tokens to the new strategy
-        // NOTE: `migrate` will automatically forward all `want` in this strategy to the new one
+        liquidateAllPositions();
+
+        if (balanceOfLQTY() > 0) {
+            LQTY.safeTransfer(_newStrategy, balanceOfLQTY());
+        }
     }
 
-    // Override this to add all tokens/tokenized positions this contract manages
-    // on a *persistent* basis (e.g. not just for swapping back to want ephemerally)
-    // NOTE: Do *not* include `want`, already included in `sweep` below
-    //
-    // Example:
-    //
-    //    function protectedTokens() internal override view returns (address[] memory) {
-    //      address[] memory protected = new address[](3);
-    //      protected[0] = tokenA;
-    //      protected[1] = tokenB;
-    //      protected[2] = tokenC;
-    //      return protected;
-    //    }
     function protectedTokens()
         internal
         view
         override
         returns (address[] memory)
-    // solhint-disable-next-line no-empty-blocks
     {
-
+        address[] memory protected = new address[](1);
+        protected[0] = address(bProtocolPool);
+        return protected;
     }
 
-    /**
-     * @notice
-     *  Provide an accurate conversion from `_amtInWei` (denominated in wei)
-     *  to `want` (using the native decimal characteristics of `want`).
-     * @dev
-     *  Care must be taken when working with decimals to assure that the conversion
-     *  is compatible. As an example:
-     *
-     *      given 1e17 wei (0.1 ETH) as input, and want is USDC (6 decimals),
-     *      with USDC/ETH = 1800, this should give back 1800000000 (180 USDC)
-     *
-     * @param _amtInWei The amount (in wei/1e-18 ETH) to convert to `want`
-     * @return The amount in `want` of `_amtInEth` converted to `want`
-     **/
     function ethToWant(uint256 _amtInWei)
         public
         view
@@ -231,16 +183,16 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256)
     {
-        return (_amtInWei * ethPrice()) / 1e18;
+        return (_amtInWei * ethPrice()) / 1e18; // Assumes that 1 LUSD = 1 USD
     }
 
     // ---------- HELPER & UTILITY FUNCTIONS ------------
 
-    function _sellAvailableRewards() internal {
+    function _claimAndSellAvailableRewards() internal {
         bProtocolPool.withdraw(0); // Should trigger the contract to send us our LQTY rewards
 
         // Convert LQTY rewards to DAI
-        if (LQTY.balanceOf(address(this)) > 0) {
+        if (balanceOfLQTY() > 0) {
             _sellLQTYforDAI();
         }
 
@@ -258,10 +210,12 @@ contract Strategy is BaseStrategy {
     }
 
     function _sellLQTYforDAI() internal {
+        uint256 _amountToSell = balanceOfLQTY();
+
         _checkAllowance(
             address(router),
             address(LQTY),
-            LQTY.balanceOf(address(this))
+            _amountToSell
         );
 
         bytes memory path = abi.encodePacked(
@@ -279,7 +233,7 @@ contract Strategy is BaseStrategy {
                 path,
                 address(this),
                 block.timestamp,
-                LQTY.balanceOf(address(this)),
+                _amountToSell,
                 0
             )
         );
@@ -344,6 +298,10 @@ contract Strategy is BaseStrategy {
 
     function balanceOfWant() public view returns (uint256) {
         return want.balanceOf(address(this));
+    }
+
+    function balanceOfLQTY() public view returns (uint256) {
+        return LQTY.balanceOf(address(this));
     }
 
     function balanceOfPoolTokens() public view returns (uint256) {

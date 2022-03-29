@@ -62,6 +62,17 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         );
 
         // do here additional setup
+        vm_std_cheats.label(address(vault), "Vault");
+        vm_std_cheats.label(address(strategy), "Strategy");
+        vm_std_cheats.label(address(DAI), "DAI");
+        vm_std_cheats.label(address(WETH), "WETH");
+        vm_std_cheats.label(address(want), "Want");
+        vm_std_cheats.label(address(0x00FF66AB8699AAfa050EE5EF5041D1503aa0849a), "B.Protocol");
+        vm_std_cheats.label(address(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419), "ChainlinkETHUSD");
+        vm_std_cheats.label(address(0x66017D22b0f8556afDd19FC67041899Eb65a21bb), "Liquity");
+        vm_std_cheats.label(address(0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D), "LQTY");
+        vm_std_cheats.label(address(0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA), "CurvePool");
+        vm_std_cheats.label(address(0xE592427A0AEce92De3Edee1F18E0157C05861564), "Uniswap");
         vault.setDepositLimit(type(uint256).max);
         tip(address(want), address(user), 10000e18);
         vm_std_cheats.deal(user, 10_000 ether);

@@ -41,10 +41,19 @@ contract StrategyOperationsTest is StrategyFixture {
         // harvest
         strategy.harvest();
         assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100); // 1 / 1e16 LUSD margin
+
         // tend
+        skip(60 * 3);
         strategy.tend();
 
+        // vault.updateStrategyDebtRatio(address(strategy), 5000);
+        // skip(1);
+        // strategy.harvest();
         uint256 _userVaultBalance = vault.balanceOf(user);
+        console.log("Vault PPS", vault.pricePerShare());
+        console.log("Share amount", _userVaultBalance);
+        
+        skip(60 * 3);
         vm_std_cheats.prank(user);
         vault.withdraw(_userVaultBalance, user, 1000);
 
@@ -95,7 +104,7 @@ contract StrategyOperationsTest is StrategyFixture {
         // TODO: Uncomment the lines below
         // uint256 profit = want.balanceOf(address(vault));
         // assertGt(want.balanceOf(address(strategy) + profit), _amount);
-        // assertGt(vault.pricePerShare(), beforePps)
+        // assertGt(vault.pricePerShare(), beforePps);
     }
 
     function testChangeDebt(uint256 _amount) public {
@@ -110,12 +119,12 @@ contract StrategyOperationsTest is StrategyFixture {
         skip(1);
         strategy.harvest();
         uint256 half = uint256(_amount / 2);
-        assertEq(strategy.estimatedTotalAssets(), half);
+        assertApproxEq(strategy.estimatedTotalAssets(), half, 100);
 
         vault.updateStrategyDebtRatio(address(strategy), 10_000);
         skip(1);
         strategy.harvest();
-        assertEq(strategy.estimatedTotalAssets(), _amount);
+        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
 
         // In order to pass these tests, you will need to implement prepareReturn.
         // TODO: uncomment the following lines.
