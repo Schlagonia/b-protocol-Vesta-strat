@@ -4,138 +4,105 @@ import "forge-std/console.sol";
 
 import {StrategyFixture} from "./utils/StrategyFixture.sol";
 
+import "../interfaces/Chainlink/AggregatorV3Interface.sol";
+
 contract StrategyOperationsTest is StrategyFixture {
-    // setup is run on before each test
     function setUp() public override {
-        // setup vault
         super.setUp();
     }
 
-    function testSetupVaultOK() public {
-        console.log("address of vault", address(vault));
-        assertTrue(address(0) != address(vault));
-        assertEq(vault.token(), address(want));
-        assertEq(vault.depositLimit(), type(uint256).max);
-    }
-
-    // TODO: add additional check on strat params
-    function testSetupStrategyOK() public {
-        console.log("address of strategy", address(strategy));
-        assertTrue(address(0) != address(strategy));
-        assertEq(address(strategy.vault()), address(vault));
-    }
-
-    /// Test Operations
     function testStrategyOperation(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 1 ether && _amount < 10e18);
+        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
 
         uint256 balanceBefore = want.balanceOf(address(user));
-        vm_std_cheats.prank(user);
-        want.approve(address(vault), _amount);
-        vm_std_cheats.prank(user);
-        vault.deposit(_amount);
-        assertEq(want.balanceOf(address(vault)), _amount);
+        depositToVault(user, vault, _amount);
 
-        // Note: need to check if this is equivalent to chain.sleep in brownie
-        skip(60 * 3); // skip 3 minutes
-        // harvest
+        skip(3 * ONE_MINUTE);
         strategy.harvest();
-        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100); // 1 / 1e16 LUSD margin
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA); 
 
-        // tend
-        skip(60 * 3);
+        skip(3 * ONE_MINUTE);
         strategy.tend();
-
-        // vault.updateStrategyDebtRatio(address(strategy), 5000);
-        // skip(1);
-        // strategy.harvest();
-        uint256 _userVaultBalance = vault.balanceOf(user);
-        console.log("Vault PPS", vault.pricePerShare());
-        console.log("Share amount", _userVaultBalance);
         
-        skip(60 * 3);
+        skip(3 * ONE_MINUTE);
         vm_std_cheats.prank(user);
-        vault.withdraw(_userVaultBalance, user, 1000);
+        vault.withdraw();
 
-        assertApproxEq(want.balanceOf(user), balanceBefore, 100);
+        assertRelApproxEq(want.balanceOf(user), balanceBefore, ONE_BIP_REL_DELTA);
     }
 
     function testEmergencyExit(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.1 ether && _amount < 10e18);
+        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
 
-        // Deposit to the vault
-        vm_std_cheats.prank(user);
-        want.approve(address(vault), _amount);
-        vm_std_cheats.prank(user);
-        vault.deposit(_amount);
+        depositToVault(user, vault, _amount);
+
         skip(1);
         strategy.harvest();
-        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA);
 
-        // set emergency and exit
         strategy.setEmergencyExit();
         skip(1);
         strategy.harvest();
-        assertLt(strategy.estimatedTotalAssets(), _amount);
+
+        assertRelApproxEq(strategy.estimatedTotalAssets(), 0, ONE_BIP_REL_DELTA);
+        assertRelApproxEq(want.balanceOf(address(vault)), _amount, ONE_BIP_REL_DELTA);
     }
 
     function testProfitableHarvest(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.1 ether && _amount < 10e18);
+        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
 
-        // Deposit to the vault
-        vm_std_cheats.prank(user);
-        want.approve(address(vault), _amount);
-        vm_std_cheats.prank(user);
-        vault.deposit(_amount);
-        assertEq(want.balanceOf(address(vault)), _amount);
+        uint256 balanceBefore = want.balanceOf(address(user));
+        depositToVault(user, vault, _amount);
 
         // Harvest 1: Send funds through the strategy
         skip(1);
         strategy.harvest();
-        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA);
 
-        // TODO: Add some code before harvest #2 to simulate earning yield
+        uint256 beforePps = vault.pricePerShare();
+
+        tip(address(LQTY), address(strategy), _amount / 1000); // 1 LQTY airdrop for every 1000 LUSD in strat
 
         // Harvest 2: Realize profit
         skip(1);
         strategy.harvest();
+
         skip(3600 * 6);
 
-        // TODO: Uncomment the lines below
-        // uint256 profit = want.balanceOf(address(vault));
-        // assertGt(want.balanceOf(address(strategy) + profit), _amount);
-        // assertGt(vault.pricePerShare(), beforePps);
+        mockChainlink();
+
+        uint256 profit = want.balanceOf(address(vault));
+        assertGt(strategy.estimatedTotalAssets() + profit, _amount);
+        assertGt(vault.pricePerShare(), beforePps);
+
+        vm_std_cheats.prank(user);
+        vault.withdraw();
+        assertGt(want.balanceOf(user), balanceBefore);
     }
 
     function testChangeDebt(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.1 ether && _amount < 10e18);
+        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
 
-        // Deposit to the vault and harvest
-        vm_std_cheats.prank(user);
-        want.approve(address(vault), _amount);
-        vm_std_cheats.prank(user);
-        vault.deposit(_amount);
+        depositToVault(user, vault, _amount);
         vault.updateStrategyDebtRatio(address(strategy), 5_000);
         skip(1);
         strategy.harvest();
         uint256 half = uint256(_amount / 2);
-        assertApproxEq(strategy.estimatedTotalAssets(), half, 100);
+        assertRelApproxEq(strategy.estimatedTotalAssets(), half, ONE_BIP_REL_DELTA);
 
         vault.updateStrategyDebtRatio(address(strategy), 10_000);
         skip(1);
         strategy.harvest();
-        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA);
 
-        // In order to pass these tests, you will need to implement prepareReturn.
-        // TODO: uncomment the following lines.
-        // vault.updateStrategyDebtRatio(address(strategy), 5_000);
-        // skip(1);
-        // strategy.harvest();
-        // assertEq(strategy.estimatedTotalAssets(), half);
+        vault.updateStrategyDebtRatio(address(strategy), 5_000);
+        skip(1);
+        strategy.harvest();
+        assertRelApproxEq(strategy.estimatedTotalAssets(), half, ONE_BIP_REL_DELTA);
     }
 
     function testSweep(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.1 ether && _amount < 10e18);
+        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
 
         vm_std_cheats.prank(user);
         // solhint-disable-next-line
@@ -155,10 +122,9 @@ contract StrategyOperationsTest is StrategyFixture {
         vm_std_cheats.expectRevert("!shares");
         strategy.sweep(address(vault));
 
-        // TODO: If you add protected tokens to the strategy.
         // Protected token doesn't work
-        // vm_std_cheats.expectRevert("!protected");
-        // strategy.sweep(strategy.protectedToken());
+        vm_std_cheats.expectRevert("!protected");
+        strategy.sweep(0x00FF66AB8699AAfa050EE5EF5041D1503aa0849a); // B.Protocol tokens
 
         uint256 beforeBalance = weth.balanceOf(address(this));
         vm_std_cheats.prank(user);
@@ -170,7 +136,7 @@ contract StrategyOperationsTest is StrategyFixture {
     }
 
     function testTriggers(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.1 ether && _amount < 10e18);
+        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
 
         // Deposit to the vault and harvest
         vm_std_cheats.prank(user);

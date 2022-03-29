@@ -8,6 +8,9 @@ import {ExtendedDSTest} from "./ExtendedDSTest.sol";
 import {stdCheats} from "forge-std/stdlib.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {IVault} from "../../interfaces/Vault.sol";
+import "forge-std/console.sol";
+
+import "../../interfaces/Chainlink/AggregatorV3Interface.sol";
 
 // NOTE: if the name of the strat or file changes this needs to be updated
 import {Strategy} from "../../Strategy.sol";
@@ -38,10 +41,16 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
     IERC20 public constant LUSD =
         IERC20(0x5f98805A4E8be255a32880FDeC7F6728C6568bA0);
+    IERC20 public constant LQTY = 
+        IERC20(0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D);
+    
     address public whale = 0x5f98805A4E8be255a32880FDeC7F6728C6568bA0; // OlympusDAO treasury
     address public user = address(1337);
     address public strategist = address(1);
     uint256 public constant WETH_AMT = 10**18;
+
+    uint256 internal constant ONE_BIP_REL_DELTA = 10000;
+    uint256 internal constant ONE_MINUTE = 60;
 
     function setUp() public virtual {
         weth = WETH;
@@ -67,15 +76,18 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         vm_std_cheats.label(address(DAI), "DAI");
         vm_std_cheats.label(address(WETH), "WETH");
         vm_std_cheats.label(address(want), "Want");
+        vm_std_cheats.label(address(LQTY), "LQTY");
         vm_std_cheats.label(address(0x00FF66AB8699AAfa050EE5EF5041D1503aa0849a), "B.Protocol");
         vm_std_cheats.label(address(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419), "ChainlinkETHUSD");
         vm_std_cheats.label(address(0x66017D22b0f8556afDd19FC67041899Eb65a21bb), "Liquity");
-        vm_std_cheats.label(address(0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D), "LQTY");
         vm_std_cheats.label(address(0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA), "CurvePool");
         vm_std_cheats.label(address(0xE592427A0AEce92De3Edee1F18E0157C05861564), "Uniswap");
         vault.setDepositLimit(type(uint256).max);
-        tip(address(want), address(user), 10000e18);
+        tip(address(want), address(user), 100_000_000 ether);
         vm_std_cheats.deal(user, 10_000 ether);
+
+        testSetupVaultOK();
+        testSetupStrategyOK();
     }
 
     // Deploys a vault
@@ -144,5 +156,43 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         strategy.setKeeper(_keeper);
 
         vault.addStrategy(_strategy, 10_000, 0, type(uint256).max, 1_000);
+    }
+
+    function testSetupVaultOK() internal {
+        console.log("address of vault", address(vault));
+        assertTrue(address(0) != address(vault));
+        assertEq(vault.token(), address(want));
+        assertEq(vault.depositLimit(), type(uint256).max);
+    }
+
+    // TODO: add additional check on strat params
+    function testSetupStrategyOK() internal {
+        console.log("address of strategy", address(strategy));
+        assertTrue(address(0) != address(strategy));
+        assertEq(address(strategy.vault()), address(vault));
+    }
+
+    function depositToVault(address _depositor, IVault _vault, uint256 _amount) internal {
+        uint256 _vaultWantBalanceBefore = want.balanceOf(address(vault));
+
+        vm_std_cheats.prank(_depositor);
+        want.approve(address(_vault), _amount);
+        vm_std_cheats.prank(_depositor);
+        vault.deposit(_amount);
+
+        assertEq(want.balanceOf(address(vault)), _amount + _vaultWantBalanceBefore);
+    }
+
+    function mockChainlink() internal {
+        AggregatorV3Interface chainlink = AggregatorV3Interface(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419); // ETH/USD oracle that B.Protcol calls
+        (
+            uint80 _roundId,
+            int256 _answer,
+            ,
+            ,
+            uint80 _answeredInRound
+        ) = chainlink.latestRoundData();
+
+        vm_std_cheats.mockCall(address(chainlink), abi.encodeWithSelector(chainlink.latestRoundData.selector), abi.encode(_roundId, _answer, block.timestamp + 1000000, block.timestamp + 1000000, _answeredInRound));
     }
 }
