@@ -85,6 +85,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         vault.setDepositLimit(type(uint256).max);
         tip(address(want), address(user), 100_000_000 ether);
         vm_std_cheats.deal(user, 10_000 ether);
+        
 
         testSetupVaultOK();
         testSetupStrategyOK();

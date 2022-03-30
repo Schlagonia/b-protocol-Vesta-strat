@@ -20,7 +20,7 @@ contract StrategyRevokeTest is StrategyFixture {
         strategy.harvest();
         skip(1);
         strategy.harvest();
-        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA);
 
         // In order to pass these tests, you will need to implement prepareReturn.
         // TODO: uncomment the following lines.
@@ -28,7 +28,7 @@ contract StrategyRevokeTest is StrategyFixture {
         skip(1);
         strategy.harvest();
 
-        assertApproxEq(want.balanceOf(address(vault)), _amount, _amount * 1 * 1e18 / 10000);
+        assertRelApproxEq(want.balanceOf(address(vault)), _amount, ONE_BIP_REL_DELTA);
     }
 
     function testRevokeStrategyFromStrategy(uint256 _amount) public {
@@ -40,11 +40,11 @@ contract StrategyRevokeTest is StrategyFixture {
         vault.deposit(_amount);
         skip(1);
         strategy.harvest();
-        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA);
 
         strategy.setEmergencyExit();
         skip(1);
         strategy.harvest();
-        assertApproxEq(want.balanceOf(address(vault)), _amount, _amount * 1 * 1e18 / 10000); // Allow one bip
+        assertRelApproxEq(want.balanceOf(address(vault)), _amount, ONE_BIP_REL_DELTA); 
     }
 }

@@ -27,24 +27,16 @@ contract StrategyShutdownTest is StrategyFixture {
             want.transfer(address(123), bal);
         }
 
-        // Mock Chainlink responses
-        AggregatorV3Interface chainlink = AggregatorV3Interface(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419); // ETH/USD oracle that B.Protcol calls
-        (
-            uint80 _roundId,
-            int256 _answer,
-            ,
-            ,
-            uint80 _answeredInRound
-        ) = chainlink.latestRoundData();
+        mockChainlink();
 
         // Harvest 1: Send funds through the strategy
         skip(3600 * 7);
         vm_std_cheats.roll(block.number + 1);
         
-        vm_std_cheats.mockCall(address(chainlink), abi.encodeWithSelector(chainlink.latestRoundData.selector), abi.encode(_roundId, _answer, block.timestamp, block.timestamp, _answeredInRound));
+        
 
         strategy.harvest();
-        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA);
 
         // Set Emergency
         vault.setEmergencyShutdown(true);
@@ -57,7 +49,7 @@ contract StrategyShutdownTest is StrategyFixture {
         vm_std_cheats.prank(user);
         vault.withdraw();
 
-        assertEq(want.balanceOf(user), _amount);
+        assertRelApproxEq(want.balanceOf(user), _amount, ONE_BIP_REL_DELTA);
     }
 
     function testBasicShutdown(uint256 _amount) public {
@@ -70,11 +62,13 @@ contract StrategyShutdownTest is StrategyFixture {
         vault.deposit(_amount);
         assertEq(want.balanceOf(address(vault)), _amount);
 
+        mockChainlink();
+
         // Harvest 1: Send funds through the strategy
         skip(1 days);
         vm_std_cheats.roll(block.number + 100);
         strategy.harvest();
-        assertApproxEq(strategy.estimatedTotalAssets(), _amount, 100);
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA);
 
         // Earn interest
         skip(1 days);
