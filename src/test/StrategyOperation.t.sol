@@ -187,13 +187,13 @@ contract StrategyOperationsTest is StrategyFixture {
         assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA); 
         assertEq(address(strategy).balance, 0);
 
-        vm_std_cheats.deal(bProtocolPool, 20 ether);
-
         uint256 _strategyShares = IERC20(bProtocolPool).balanceOf(address(strategy));
         vm_std_cheats.startPrank(address(strategy));
         IBAMM(bProtocolPool).withdraw(_strategyShares / 1000); 
         want.transfer(address(777), want.balanceOf(address(strategy))); // Throw away 0.1% of value to sim losses
         vm_std_cheats.stopPrank();
+
+        vm_std_cheats.deal(bProtocolPool, 40 ether);
 
         skip(3 * ONE_MINUTE);
         strategy.harvest();
