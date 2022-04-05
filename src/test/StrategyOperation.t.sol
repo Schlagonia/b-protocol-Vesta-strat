@@ -3,8 +3,11 @@ pragma solidity ^0.8.12;
 import "forge-std/console.sol";
 
 import {StrategyFixture} from "./utils/StrategyFixture.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import "../interfaces/Chainlink/AggregatorV3Interface.sol";
+import "../interfaces/BProtocol/IBAMM.sol";
+import {StrategyParams, IVault} from "../interfaces/Vault.sol";
 
 contract StrategyOperationsTest is StrategyFixture {
     function setUp() public override {
@@ -80,6 +83,125 @@ contract StrategyOperationsTest is StrategyFixture {
         assertGt(want.balanceOf(user), balanceBefore);
     }
 
+    // Simulate some B.AMM ETH coming back into strat
+    function testOperationsWithETH(uint256 _amount) public {
+        vm_std_cheats.assume(_amount > 100 ether && _amount < 100_000_000 ether);
+
+        uint256 balanceBefore = want.balanceOf(address(user));
+        depositToVault(user, vault, _amount);
+
+        skip(3 * ONE_MINUTE);
+        strategy.harvest();
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA); 
+        assertEq(address(strategy).balance, 0);
+
+        vm_std_cheats.deal(bProtocolPool, 10 ether);
+
+        skip(3 * ONE_MINUTE);
+        uint256 _amountToWithdraw = vault.balanceOf(user) / 2;
+        vm_std_cheats.prank(user);
+        vault.withdraw(_amountToWithdraw); // This should call liquidatePosition, which will get some ETH into the strat
+
+        assertGt(address(strategy).balance, 0);
+
+        skip(3 * ONE_MINUTE);
+        strategy.harvest();
+        assertEq(address(strategy).balance, 0);
+
+        uint256 profit = want.balanceOf(address(vault));
+        assertGt(profit, 0);
+    }
+
+    // Run it back but this time instead of harvest use sellAvailableETH to dispose of ETH
+    function testOperationsWithETHManualSell(uint256 _amount) public {
+        vm_std_cheats.assume(_amount > 100 ether && _amount < 100_000_000 ether);
+
+        depositToVault(user, vault, _amount);
+
+        skip(3 * ONE_MINUTE);
+        strategy.harvest();
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA); 
+        assertEq(address(strategy).balance, 0);
+
+        uint256 _strategyAssetsBeforeETH = strategy.estimatedTotalAssets();
+
+        vm_std_cheats.deal(bProtocolPool, 10 ether);
+
+        skip(3 * ONE_MINUTE);
+        uint256 _amountToWithdraw = vault.balanceOf(user) / 2;
+        vm_std_cheats.prank(user);
+        vault.withdraw(_amountToWithdraw); // This should call liquidatePosition, which will get some ETH into the strat
+
+        assertGt(address(strategy).balance, 0);
+
+        strategy.sellAvailableETH();
+        assertEq(address(strategy).balance, 0);
+        assertGt(strategy.estimatedTotalAssets(), _strategyAssetsBeforeETH / 2);
+        
+        skip(3 * ONE_MINUTE);
+        strategy.harvest();
+
+        uint256 profit = want.balanceOf(address(vault));
+        assertGt(profit, 0);
+    }
+    
+    // Simulate B.AMM not able to sell the ETH and the price moves against us
+    function testIncurLosses(uint256 _amount) public {
+        vm_std_cheats.assume(_amount > 100 ether && _amount < 100_000_000 ether);
+
+        uint256 balanceBefore = want.balanceOf(address(user));
+        depositToVault(user, vault, _amount);
+
+        skip(3 * ONE_MINUTE);
+        strategy.harvest();
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA); 
+        assertEq(address(strategy).balance, 0);
+
+        vm_std_cheats.deal(bProtocolPool, 0.1 ether);
+
+        uint256 _strategyShares = IERC20(bProtocolPool).balanceOf(address(strategy));
+        vm_std_cheats.startPrank(address(strategy));
+        IBAMM(bProtocolPool).withdraw(_strategyShares / 1000); 
+        want.transfer(address(777), want.balanceOf(address(strategy))); // Throw away 0.1% of value to sim losses
+        vm_std_cheats.stopPrank();
+
+        strategy.setDoHealthCheck(false);
+
+        skip(3 * ONE_MINUTE);
+        strategy.harvest();
+
+        StrategyParams memory params = vault.strategies(address(strategy));
+        uint256 loss = params.totalLoss;
+        assertGt(loss, 0);
+    }
+
+    // Simulate above, but LQTY rewards save us and give us profit
+    function testIncurEthLossesButStrategyProfit(uint256 _amount) public {
+        vm_std_cheats.assume(_amount > 100 ether && _amount < 100_000_000 ether);
+
+        uint256 balanceBefore = want.balanceOf(address(user));
+        depositToVault(user, vault, _amount);
+
+        skip(3 * ONE_MINUTE);
+        strategy.harvest();
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA); 
+        assertEq(address(strategy).balance, 0);
+
+        vm_std_cheats.deal(bProtocolPool, 20 ether);
+
+        uint256 _strategyShares = IERC20(bProtocolPool).balanceOf(address(strategy));
+        vm_std_cheats.startPrank(address(strategy));
+        IBAMM(bProtocolPool).withdraw(_strategyShares / 1000); 
+        want.transfer(address(777), want.balanceOf(address(strategy))); // Throw away 0.1% of value to sim losses
+        vm_std_cheats.stopPrank();
+
+        skip(3 * ONE_MINUTE);
+        strategy.harvest();
+
+        uint256 profit = want.balanceOf(address(vault));
+        assertGt(profit, 0);
+    }
+
     function testChangeDebt(uint256 _amount) public {
         vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
 
@@ -121,10 +243,6 @@ contract StrategyOperationsTest is StrategyFixture {
         // Vault share token doesn't work
         vm_std_cheats.expectRevert("!shares");
         strategy.sweep(address(vault));
-
-        // Protected token doesn't work
-        vm_std_cheats.expectRevert("!protected");
-        strategy.sweep(0x00FF66AB8699AAfa050EE5EF5041D1503aa0849a); // B.Protocol tokens
 
         uint256 beforeBalance = weth.balanceOf(address(this));
         vm_std_cheats.prank(user);

@@ -3,7 +3,7 @@
 pragma solidity ^0.8.12;
 pragma experimental ABIEncoderV2;
 
-import {BaseStrategyInitializable} from "@yearnvaults/contracts/BaseStrategy.sol";
+import {BaseStrategy} from "@yearnvaults/contracts/BaseStrategy.sol";
 
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -14,8 +14,9 @@ import "./interfaces/BProtocol/IBAMM.sol";
 import "./interfaces/Liquity/IStabilityPool.sol";
 import "./interfaces/Curve/StableSwapExchange.sol";
 import "./interfaces/Uniswap/ISwapRouter.sol";
+import "./interfaces/WETH/IWETH9.sol";
 
-contract Strategy is BaseStrategyInitializable {
+contract Strategy is BaseStrategy {
     using SafeERC20 for IERC20;
     using Address for address;
 
@@ -29,8 +30,8 @@ contract Strategy is BaseStrategyInitializable {
         IERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F);
     IERC20 internal constant LQTY =
         IERC20(0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D);
-    IERC20 internal constant WETH =
-        IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+    IWETH9 internal constant WETH =
+        IWETH9(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
 
     // LUSD3CRV Curve Metapool
     IStableSwapExchange internal constant curvePool =
@@ -45,17 +46,17 @@ contract Strategy is BaseStrategyInitializable {
 
     // Minimum expected output when swapping
     // This should be relative to MAX_BPS representing 100%
-    uint256 public minExpectedSwapPercentage;
+    uint256 public minExpectedSwapPercentageBips;
 
     uint24 public ethToDaiFee;
     uint24 public lqtyToEthFee;
 
-    constructor(address _vault) BaseStrategyInitializable(_vault) {
+    constructor(address _vault) BaseStrategy(_vault) {
         ethToDaiFee = 3000;
         lqtyToEthFee = 3000;
 
         // Allow 1% slippage by default
-        minExpectedSwapPercentage = 9900;
+        minExpectedSwapPercentageBips = 9900;
 
         healthCheck = 0xDDCea799fF1699e98EDF118e0629A974Df7DF012;
 
@@ -91,13 +92,13 @@ contract Strategy is BaseStrategyInitializable {
             uint256 _debtPayment
         )
     {
-        // Claim & sell any LQTY.
-
-        _claimAndSellAvailableRewards();
-
         // Liquidate position so that everything is in want
 
         liquidateAllPositions();
+
+        // Claim & sell any LQTY & ETH.
+
+        _claimAndSellAvailableRewards();
 
         // Run profit, loss, & debt payment calcs
 
@@ -132,7 +133,6 @@ contract Strategy is BaseStrategyInitializable {
         }
 
         bProtocolPool.withdraw(balanceOfPoolTokens());
-        _sellAvailableETH();
 
         adjustPosition(_amountNeeded);
 
@@ -152,7 +152,6 @@ contract Strategy is BaseStrategyInitializable {
         returns (uint256 _amountFreed)
     {
         bProtocolPool.withdraw(balanceOfPoolTokens());
-        _sellAvailableETH();
 
         return balanceOfWant();
     }
@@ -163,6 +162,11 @@ contract Strategy is BaseStrategyInitializable {
         if (balanceOfLQTY() > 0) {
             LQTY.safeTransfer(_newStrategy, balanceOfLQTY());
         }
+
+        if (address(this).balance > 0) {
+            (bool _success, ) = _newStrategy.call{ value: address(this).balance }("");
+            require(_success, "migrate: sending ETH failed");
+        }
     }
 
     function protectedTokens()
@@ -170,16 +174,11 @@ contract Strategy is BaseStrategyInitializable {
         view
         override
         returns (address[] memory)
-    {
-        address[] memory protected = new address[](1);
-        protected[0] = address(bProtocolPool);
-        return protected;
-    }
+    {}
 
     function ethToWant(uint256 _amtInWei)
         public
         view
-        virtual
         override
         returns (uint256)
     {
@@ -197,6 +196,10 @@ contract Strategy is BaseStrategyInitializable {
         }
 
         _sellAvailableETH(); // This will handle converting that DAI back into want
+    }
+
+    function sellAvailableETH() external onlyVaultManagers {
+        _sellAvailableETH();
     }
 
     function _sellAvailableETH() internal {
@@ -226,7 +229,7 @@ contract Strategy is BaseStrategyInitializable {
             address(DAI)
         );
 
-        // Proceeds from LQTY are not subject to minExpectedSwapPercentage
+        // Proceeds from LQTY are not subject to minExpectedSwapPercentageBips
         // so they could get sandwiched if we end up in an uncle block
         router.exactInput(
             ISwapRouter.ExactInputParams(
@@ -246,7 +249,7 @@ contract Strategy is BaseStrategyInitializable {
         // Balance * Price * Swap Percentage (adjusted to 18 decimals)
         uint256 _minExpected = (_ethBalance *
             _ethUSD *
-            minExpectedSwapPercentage) / (MAX_BPS * 1e18);
+            minExpectedSwapPercentageBips) / (MAX_BPS * 1e18);
 
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
             .ExactInputSingleParams(
@@ -260,7 +263,7 @@ contract Strategy is BaseStrategyInitializable {
                 0 // sqrtPriceLimitX96
             );
 
-        router.exactInputSingle{value: address(this).balance}(params);
+        router.exactInputSingle{ value: _ethBalance }(params);
         router.refundETH();
     }
 
@@ -273,7 +276,7 @@ contract Strategy is BaseStrategyInitializable {
             1, // from DAI index
             0, // to LUSD index
             _daiBalance, // amount
-            (_daiBalance * minExpectedSwapPercentage) / MAX_BPS // minDy
+            (_daiBalance * minExpectedSwapPercentageBips) / MAX_BPS // minDy
         );
     }
 
@@ -346,10 +349,11 @@ contract Strategy is BaseStrategyInitializable {
     // through Flashbots. However, since we may be swapping capital and not
     // only profits, it is important to do our best to avoid bad swaps or
     // sandwiches in case we end up in an uncle block.
-    function setMinExpectedSwapPercentage(uint256 _minExpectedSwapPercentage)
+    function setMinExpectedSwapPercentage(uint256 _minExpectedSwapPercentageBips)
         external
         onlyEmergencyAuthorized
     {
-        minExpectedSwapPercentage = _minExpectedSwapPercentage;
+        require(_minExpectedSwapPercentageBips <= MAX_BPS);
+        minExpectedSwapPercentageBips = _minExpectedSwapPercentageBips;
     }
 }

@@ -11,9 +11,6 @@ contract StrategyMigrationTest is StrategyFixture {
         super.setUp();
     }
 
-    // TODO: Add tests that show proper migration of the strategy to a newer one
-    // Use another copy of the strategy to simmulate the migration
-    // Show that nothing is lost.
     function testMigration(uint256 _amount) public {
         vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
 
@@ -28,12 +25,16 @@ contract StrategyMigrationTest is StrategyFixture {
 
         // Migrate to a new strategy
         vm_std_cheats.prank(strategist);
-        address newStrategyAddr = strategy.clone(address(vault));
+        address newStrategyAddr = deployStrategy(address(vault));
         vault.migrateStrategy(address(strategy), newStrategyAddr);
         assertRelApproxEq(
             Strategy(payable(newStrategyAddr)).estimatedTotalAssets(),
             _amount,
             ONE_BIP_REL_DELTA
         );
+    }
+
+    // Test that migrate sends ETH to new strategy
+    function testMigrationWithETH(uint256 _amount) public { 
     }
 }

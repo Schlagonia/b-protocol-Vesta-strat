@@ -43,6 +43,8 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         IERC20(0x5f98805A4E8be255a32880FDeC7F6728C6568bA0);
     IERC20 public constant LQTY = 
         IERC20(0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D);
+
+    address public constant bProtocolPool = 0x00FF66AB8699AAfa050EE5EF5041D1503aa0849a;
     
     address public whale = 0x5f98805A4E8be255a32880FDeC7F6728C6568bA0; // OlympusDAO treasury
     address public user = address(1337);
@@ -77,7 +79,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         vm_std_cheats.label(address(WETH), "WETH");
         vm_std_cheats.label(address(want), "Want");
         vm_std_cheats.label(address(LQTY), "LQTY");
-        vm_std_cheats.label(address(0x00FF66AB8699AAfa050EE5EF5041D1503aa0849a), "B.Protocol");
+        vm_std_cheats.label(bProtocolPool, "B.Protocol");
         vm_std_cheats.label(address(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419), "ChainlinkETHUSD");
         vm_std_cheats.label(address(0x66017D22b0f8556afDd19FC67041899Eb65a21bb), "Liquity");
         vm_std_cheats.label(address(0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA), "CurvePool");
@@ -85,7 +87,6 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         vault.setDepositLimit(type(uint256).max);
         tip(address(want), address(user), 100_000_000 ether);
         vm_std_cheats.deal(user, 10_000 ether);
-        
 
         testSetupVaultOK();
         testSetupStrategyOK();
