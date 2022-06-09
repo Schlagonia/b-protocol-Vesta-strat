@@ -12,7 +12,7 @@ contract StrategyShutdownTest is StrategyFixture {
     }
 
     function testVaultShutdownCanWithdraw(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 1 ether && _amount < 10_000 ether);
 
         // Deposit to the vault
         vm_std_cheats.prank(user);
@@ -53,7 +53,7 @@ contract StrategyShutdownTest is StrategyFixture {
     }
 
     function testBasicShutdown(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 1 ether && _amount < 10_000 ether);
 
         // Deposit to the vault
         vm_std_cheats.prank(user);

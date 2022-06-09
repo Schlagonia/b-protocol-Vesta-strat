@@ -15,7 +15,7 @@ contract StrategyOperationsTest is StrategyFixture {
     }
 
     function testStrategyOperation(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 1 ether && _amount < 10_000 ether);
 
         uint256 balanceBefore = want.balanceOf(address(user));
         depositToVault(user, vault, _amount);
@@ -35,7 +35,7 @@ contract StrategyOperationsTest is StrategyFixture {
     }
 
     function testEmergencyExit(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 1 ether && _amount < 10_000 ether);
 
         depositToVault(user, vault, _amount);
 
@@ -52,7 +52,7 @@ contract StrategyOperationsTest is StrategyFixture {
     }
 
     function testProfitableHarvest(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 1 ether && _amount < 10_000 ether);
 
         uint256 balanceBefore = want.balanceOf(address(user));
         depositToVault(user, vault, _amount);
@@ -64,7 +64,7 @@ contract StrategyOperationsTest is StrategyFixture {
 
         uint256 beforePps = vault.pricePerShare();
 
-        tip(address(LQTY), address(strategy), _amount / 1000); // 1 LQTY airdrop for every 1000 LUSD in strat
+        tip(address(VSTA), address(strategy), _amount / 1000); // 1 LQTY airdrop for every 1000 LUSD in strat
 
         // Harvest 2: Realize profit
         skip(1);
@@ -85,7 +85,7 @@ contract StrategyOperationsTest is StrategyFixture {
 
     // Simulate some B.AMM ETH coming back into strat
     function testOperationsWithETH(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 100 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 100 ether && _amount < 10_000 ether);
 
         uint256 balanceBefore = want.balanceOf(address(user));
         depositToVault(user, vault, _amount);
@@ -114,7 +114,7 @@ contract StrategyOperationsTest is StrategyFixture {
 
     // Run it back but this time instead of harvest use sellAvailableETH to dispose of ETH
     function testOperationsWithETHManualSell(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 100 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 100 ether && _amount < 10_000 ether);
 
         depositToVault(user, vault, _amount);
 
@@ -147,7 +147,7 @@ contract StrategyOperationsTest is StrategyFixture {
     
     // Simulate B.AMM not able to sell the ETH and the price moves against us
     function testIncurLosses(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 100 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 100 ether && _amount < 10_000 ether);
 
         uint256 balanceBefore = want.balanceOf(address(user));
         depositToVault(user, vault, _amount);
@@ -161,8 +161,8 @@ contract StrategyOperationsTest is StrategyFixture {
 
         uint256 _strategyShares = IERC20(bProtocolPool).balanceOf(address(strategy));
         vm_std_cheats.startPrank(address(strategy));
-        IBAMM(bProtocolPool).withdraw(_strategyShares / 1000); 
-        want.transfer(address(777), want.balanceOf(address(strategy))); // Throw away 0.1% of value to sim losses
+        IBAMM(bProtocolPool).withdraw(_strategyShares / 10); 
+        want.transfer(address(777), want.balanceOf(address(strategy))); // Throw away 10% of value to sim losses
         vm_std_cheats.stopPrank();
 
         strategy.setDoHealthCheck(false);
@@ -177,7 +177,7 @@ contract StrategyOperationsTest is StrategyFixture {
 
     // Simulate above, but LQTY rewards save us and give us profit
     function testIncurEthLossesButStrategyProfit(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 100 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 100 ether && _amount < 10_000 ether);
 
         uint256 balanceBefore = want.balanceOf(address(user));
         depositToVault(user, vault, _amount);
@@ -203,7 +203,7 @@ contract StrategyOperationsTest is StrategyFixture {
     }
 
     function testChangeDebt(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 1 ether && _amount < 10_000 ether);
 
         depositToVault(user, vault, _amount);
         vault.updateStrategyDebtRatio(address(strategy), 5_000);
@@ -224,7 +224,7 @@ contract StrategyOperationsTest is StrategyFixture {
     }
 
     function testSweep(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 1 ether && _amount < 10_000 ether);
 
         vm_std_cheats.prank(user);
         // solhint-disable-next-line
@@ -254,7 +254,7 @@ contract StrategyOperationsTest is StrategyFixture {
     }
 
     function testTriggers(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 1 ether && _amount < 10_000 ether);
 
         // Deposit to the vault and harvest
         vm_std_cheats.prank(user);
@@ -267,5 +267,77 @@ contract StrategyOperationsTest is StrategyFixture {
 
         strategy.harvestTrigger(0);
         strategy.tendTrigger(0);
+    }
+
+    function testHarvestAllRewards(uint256 _amount) public {
+        vm_std_cheats.assume(_amount > 100 ether && _amount < 10_000 ether);
+
+        uint256 balanceBefore = want.balanceOf(address(user));
+        depositToVault(user, vault, _amount);
+
+        skip(3 * ONE_MINUTE);
+        strategy.harvest();
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA); 
+        assertEq(address(strategy).balance, 0);
+        assertEq(VSTA.balanceOf(address(strategy)), 0);
+
+        vm_std_cheats.deal(bProtocolPool, 1 ether);
+        vm_std_cheats.prank(0xC9032419AA502fAFA107775DCa8b7d07575d9DB5); //Vest Multisig
+        VSTA.transfer(bProtocolPool, 10 ether);
+
+        skip(3 * ONE_MINUTE);
+        uint256 _amountToWithdraw = vault.balanceOf(user) / 2;
+        vm_std_cheats.prank(user);
+        vault.withdraw(_amountToWithdraw); // This should call liquidatePosition, which will get some ETH into the strat
+
+        assertGt(address(strategy).balance, 0);
+        assertGt(VSTA.balanceOf(address(strategy)), 0);
+
+        skip(3 * ONE_MINUTE);
+        strategy.harvest();
+        assertEq(address(strategy).balance, 0);
+        assertEq(VSTA.balanceOf(address(strategy)), 0);
+  
+        uint256 profit = want.balanceOf(address(vault));
+        assertGt(profit, 0);
+
+        skip(3600 * 6);
+
+        vm_std_cheats.prank(user);
+        vault.withdraw();
+        
+        assertGt(want.balanceOf(address(user)), balanceBefore);
+    }
+
+    function testLargeDeposit() public {
+        uint256 _amount = 100_000 ether;
+
+        uint256 balanceBefore = want.balanceOf(address(user));
+        depositToVault(user, vault, _amount);
+
+        // Harvest 1: Send funds through the strategy
+        skip(1);
+        strategy.harvest();
+        assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA);
+
+        uint256 beforePps = vault.pricePerShare();
+
+        tip(address(VSTA), address(strategy), _amount / 1000); // 1 LQTY airdrop for every 1000 LUSD in strat
+
+        // Harvest 2: Realize profit
+        skip(1);
+        strategy.harvest();
+
+        skip(3600 * 6);
+
+        mockChainlink();
+
+        uint256 profit = want.balanceOf(address(vault));
+        assertGt(strategy.estimatedTotalAssets() + profit, _amount);
+        assertGt(vault.pricePerShare(), beforePps);
+
+        vm_std_cheats.prank(user);
+        vault.withdraw();
+        assertGt(want.balanceOf(user), balanceBefore);
     }
 }

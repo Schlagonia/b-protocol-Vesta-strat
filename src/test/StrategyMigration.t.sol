@@ -12,7 +12,7 @@ contract StrategyMigrationTest is StrategyFixture {
     }
 
     function testMigration(uint256 _amount) public {
-        vm_std_cheats.assume(_amount > 0.01 ether && _amount < 100_000_000 ether);
+        vm_std_cheats.assume(_amount > 1 ether && _amount < 10_000 ether);
 
         // Deposit to the vault and harvest
         vm_std_cheats.prank(user);

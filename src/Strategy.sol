@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0
-
 pragma solidity ^0.8.12;
 pragma experimental ABIEncoderV2;
 
@@ -9,11 +8,13 @@ import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
+import {IERC20Extended} from "./interfaces/IERC20Extended.sol";
 
 import "./interfaces/BProtocol/IBAMM.sol";
-import "./interfaces/Liquity/IStabilityPool.sol";
-import "./interfaces/Curve/StableSwapExchange.sol";
-import "./interfaces/Uniswap/ISwapRouter.sol";
+import "./interfaces/Vesta/IStabilityPool.sol";
+import "./interfaces/Balancer/IBalancerVault.sol";
+import "./interfaces/Balancer/IBalancerPool.sol";
+import "./interfaces/Balancer/IAsset.sol";
 import "./interfaces/WETH/IWETH9.sol";
 
 contract Strategy is BaseStrategy {
@@ -21,25 +22,27 @@ contract Strategy is BaseStrategy {
     using Address for address;
 
     IBAMM public constant bProtocolPool =
-        IBAMM(0x00FF66AB8699AAfa050EE5EF5041D1503aa0849a);
-    IStabilityPool public constant liquityStabilityPool =
-        IStabilityPool(0x66017D22b0f8556afDd19FC67041899Eb65a21bb); 
+        IBAMM(0x12c60B3170Fb43E6A8f8ba2d843621c19324329E);
+    IStabilityPool public constant stabilityPool =
+        IStabilityPool(0x64cA46508ad4559E1fD94B3cf48f3164B4a77E42); 
 
-    // DAI used for swaps routing
-    IERC20 internal constant DAI =
-        IERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F);
-    IERC20 internal constant LQTY =
-        IERC20(0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D);
+    IERC20 internal constant VSTA =
+        IERC20(0xa684cd057951541187f288294a1e1C2646aA2d24);
     IWETH9 internal constant WETH =
-        IWETH9(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+        IWETH9(0x82aF49447D8a07e3bd95BD0d56f35241523fBab1);
+    // USDC used for swaps routing
+    address internal constant usdc =
+        address(0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8);
 
-    // LUSD3CRV Curve Metapool
-    IStableSwapExchange internal constant curvePool =
-        IStableSwapExchange(0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA);
-
-    // Uniswap v3 router
-    ISwapRouter internal constant router =
-        ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
+    IBalancerVault internal constant balancerVault =
+        IBalancerVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
+    
+    address public constant vstaPool = address(0xC61ff48f94D801c1ceFaCE0289085197B5ec44F0);
+    bytes32 public immutable vstaPoolId;
+    address public constant wethUsdcPool = address(0x64541216bAFFFEec8ea535BB71Fbc927831d0595);
+    bytes32 public immutable wethUsdcPoolId;
+    address public constant usdcVstPool = address(0x5A5884FC31948D59DF2aEcCCa143dE900d49e1a3);
+    bytes32 public immutable usdcVstPoolId;
 
     // 100%
     uint256 internal constant MAX_BPS = 10000;
@@ -48,38 +51,60 @@ contract Strategy is BaseStrategy {
     // This should be relative to MAX_BPS representing 100%
     uint256 public minExpectedSwapPercentageBips;
 
-    uint24 public ethToDaiFee;
-    uint24 public lqtyToEthFee;
+    uint256 private immutable wantDecimals;
+    uint256 private immutable minWant;
+    uint256 private immutable maxSingleInvest;
 
     constructor(address _vault) BaseStrategy(_vault) {
-        ethToDaiFee = 3000;
-        lqtyToEthFee = 3000;
-
-        // Allow 1% slippage by default
-        minExpectedSwapPercentageBips = 9900;
-
-        healthCheck = 0xDDCea799fF1699e98EDF118e0629A974Df7DF012;
+        // Allow .5% slippage by default
+        minExpectedSwapPercentageBips = 9950;
 
         want.safeApprove(address(bProtocolPool), type(uint256).max); // All want will be in pool, so this doesn't add sec risk
+
+        vstaPoolId = IBalancerPool(vstaPool).getPoolId();
+        wethUsdcPoolId = IBalancerPool(wethUsdcPool).getPoolId();
+        usdcVstPoolId = IBalancerPool(usdcVstPool).getPoolId();
+
+        wantDecimals = IERC20Extended(address(want)).decimals();
+
+        minWant = 10 ** (wantDecimals -3);
+        maxSingleInvest = 10 ** (wantDecimals - 6);
     }
 
-    function name() external view override returns (string memory) {
-        return "StrategyBProtocolLiquityLUSD";
+    function name() external pure override returns (string memory) {
+        return "StrategyBProtocolVestaVST";
     }
 
     // B.Protocol needs to send ETH to strat
     receive() external payable {}    
 
     function estimatedTotalAssets() public view override returns (uint256) {
-        return balanceOfWant() + valueOfPoolTokens();
+        unchecked {
+            return balanceOfWant() + valueOfPoolTokens();
+        }
     }
 
+    //predicts our profit at next report
+    function expectedReturn() public view returns (uint256) {
+        uint256 estimateAssets = estimatedTotalAssets();
+
+        uint256 debt = vault.strategies(address(this)).totalDebt;
+        if (debt > estimateAssets) {
+            return 0;
+        } else {
+            unchecked {
+                return estimateAssets - debt;
+            }
+
+        }
+    }
+
+    //All funds are removed on prepare Return and not deposited back in so _debtOutstanding should never be > balanceOfWant()
     function adjustPosition(uint256 _debtOutstanding) internal override {
         uint256 _liquidWant = balanceOfWant();
 
         if (_liquidWant > _debtOutstanding) {
-            uint256 _amountToDeposit = _liquidWant - _debtOutstanding;
-            bProtocolPool.deposit(_amountToDeposit);
+            depositSome(_liquidWant - _debtOutstanding);
         }
     }
 
@@ -92,30 +117,29 @@ contract Strategy is BaseStrategy {
             uint256 _debtPayment
         )
     {
-        // Liquidate position so that everything is in want
+        _profit = 0;
+        _loss = 0; 
+        _debtPayment = 0;
 
+        // Liquidate position so that everything is in want
+        //Rewards are payed out based on amount withdrawn so this is the best way to get all rewards to the strat
         liquidateAllPositions();
 
-        // Claim & sell any LQTY & ETH.
-
-        _claimAndSellAvailableRewards();
-
         // Run profit, loss, & debt payment calcs
-
         uint256 _totalAssets = balanceOfWant();
         uint256 _totalDebt = vault.strategies(address(this)).totalDebt;
 
-        if (_totalAssets >= _totalDebt) {
-            _debtPayment = _debtOutstanding;
-            _profit = _totalAssets - _totalDebt;
-        } else {
-            _debtPayment = Math.min(_debtOutstanding, _totalAssets);
-            _loss = _totalDebt - _totalAssets;
+        unchecked {
+            
+            if (_totalAssets >= _totalDebt) {
+                _debtPayment = _debtOutstanding;
+                _profit = _totalAssets - _totalDebt;
+            } else {
+                _debtPayment = Math.min(_debtOutstanding, _totalAssets);
+
+                _loss = _totalDebt - _totalAssets;
+            }
         }
-
-        // Invest anything other than debt payment & profit 
-
-        adjustPosition(_debtPayment + _profit);
     }
 
     function liquidatePosition(uint256 _amountNeeded)
@@ -132,17 +156,18 @@ contract Strategy is BaseStrategy {
             return (_amountNeeded, 0);
         }
 
-        bProtocolPool.withdraw(balanceOfPoolTokens());
-
-        adjustPosition(_amountNeeded);
+        withdrawSome(_amountNeeded - _liquidWant);
 
         _liquidWant = balanceOfWant();
 
-        if (_liquidWant >= _amountNeeded) {
-            _liquidatedAmount = _amountNeeded;
-        } else {
-            _liquidatedAmount = _liquidWant;
-            _loss = _amountNeeded - _liquidWant;
+        unchecked {
+
+            if (_liquidWant >= _amountNeeded) {
+                _liquidatedAmount = _amountNeeded;
+            } else {
+                _liquidatedAmount = _liquidWant;
+                _loss = _amountNeeded - _liquidWant;
+            }
         }
     }
 
@@ -153,20 +178,14 @@ contract Strategy is BaseStrategy {
     {
         bProtocolPool.withdraw(balanceOfPoolTokens());
 
+        // Claim & sell any VSTA & ETH.
+        _sellAvailableRewards();
+
         return balanceOfWant();
     }
     
-    function prepareMigration(address _newStrategy) internal override {
+    function prepareMigration(address /*_newStrategy*/) internal override {
         liquidateAllPositions();
-
-        if (balanceOfLQTY() > 0) {
-            LQTY.safeTransfer(_newStrategy, balanceOfLQTY());
-        }
-
-        if (address(this).balance > 0) {
-            (bool _success, ) = _newStrategy.call{ value: address(this).balance }("");
-            require(_success, "migrate: sending ETH failed");
-        }
     }
 
     function protectedTokens()
@@ -187,97 +206,155 @@ contract Strategy is BaseStrategy {
 
     // ---------- HELPER & UTILITY FUNCTIONS ------------
 
-    function _claimAndSellAvailableRewards() internal {
-        bProtocolPool.withdraw(0); // Should trigger the contract to send us our LQTY rewards
+    function toShares(uint256 _amount) public view returns (uint256) {
+        uint256 _wantOwnedByBProtocolPool = stabilityPool.getCompoundedVSTDeposit(address(bProtocolPool));
 
-        // Convert LQTY rewards to DAI
-        if (balanceOfLQTY() > 0) {
-            _sellLQTYforDAI();
+        uint256 total = IERC20(address(bProtocolPool)).totalSupply();
+
+        return (_amount * total) / _wantOwnedByBProtocolPool;
+    }
+
+    function depositSome(uint256 _amount) internal {
+        if (_amount < minWant) {
+            return;
         }
 
-        _sellAvailableETH(); // This will handle converting that DAI back into want
+        bProtocolPool.deposit(_amount);
+    }
+    
+    function withdrawSome(uint256 _amount) internal {
+        if(_amount == 0) {
+            return;
+        }
+
+        uint256 shares = toShares(_amount);
+
+        //If we dont have enough shares we may be able to sell seized token or rewards to account for it
+        if(shares > balanceOfPoolTokens()) {
+            liquidateAllPositions();
+            return;
+        }
+
+        bProtocolPool.withdraw(shares);
+        
+    }
+
+    //Only gets called after all positions have been withdrawn previously
+    function _sellAvailableRewards() internal {
+
+        // Convert VSTA rewards to WETH
+        if (balanceOfVSTA() > 0) {
+            _sellVSTAforWeth();
+        }
+
+        _sellAvailableETH(); //Converts all ETH -> WETH -> USDC -> VST
     }
 
     function sellAvailableETH() external onlyVaultManagers {
         _sellAvailableETH();
     }
 
-    function _sellAvailableETH() internal {
-        if (address(this).balance > 0) {
-            _sellETHforDAI();
-        }
-
-        if (DAI.balanceOf(address(this)) > 0) {
-            _sellDAIforLUSD();
-        }
-    }
-
-    function _sellLQTYforDAI() internal {
-        uint256 _amountToSell = balanceOfLQTY();
+    function _sellVSTAforWeth() internal {
+        uint256 _amountToSell = balanceOfVSTA();
 
         _checkAllowance(
-            address(router),
-            address(LQTY),
+            address(balancerVault),
+            address(VSTA),
             _amountToSell
         );
 
-        bytes memory path = abi.encodePacked(
-            address(LQTY), // LQTY-ETH
-            lqtyToEthFee,
-            address(WETH), // ETH-DAI
-            ethToDaiFee,
-            address(DAI)
-        );
-
-        // Proceeds from LQTY are not subject to minExpectedSwapPercentageBips
-        // so they could get sandwiched if we end up in an uncle block
-        router.exactInput(
-            ISwapRouter.ExactInputParams(
-                path,
-                address(this),
-                block.timestamp,
+        //single swap balancer from vsta to weth
+        IBalancerVault.SingleSwap memory singleSwap =
+            IBalancerVault.SingleSwap(
+                vstaPoolId,
+                IBalancerVault.SwapKind.GIVEN_IN,
+                IAsset(address(VSTA)),
+                IAsset(address(WETH)),
                 _amountToSell,
-                0
-            )
-        );
-    }
+                abi.encode(0)
+                );  
 
-    function _sellETHforDAI() internal {
-        uint256 _ethUSD = bProtocolPool.fetchPrice();
-        uint256 _ethBalance = address(this).balance;
-
-        // Balance * Price * Swap Percentage (adjusted to 18 decimals)
-        uint256 _minExpected = (_ethBalance *
-            _ethUSD *
-            minExpectedSwapPercentageBips) / (MAX_BPS * 1e18);
-
-        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
-            .ExactInputSingleParams(
-                address(WETH), // tokenIn
-                address(DAI), // tokenOut
-                ethToDaiFee, // ETH-DAI fee
-                address(this), // recipient
-                block.timestamp, // deadline
-                _ethBalance, // amountIn
-                _minExpected, // amountOut
-                0 // sqrtPriceLimitX96
+        IBalancerVault.FundManagement memory fundManagement =
+            IBalancerVault.FundManagement(
+                address(this),
+                false,
+                payable(address(this)),
+                false
             );
 
-        router.exactInputSingle{ value: _ethBalance }(params);
-        router.refundETH();
+
+        balancerVault.swap(
+            singleSwap,
+            fundManagement,
+            0,
+            block.timestamp
+        );
+        
     }
 
-    function _sellDAIforLUSD() internal {
-        uint256 _daiBalance = DAI.balanceOf(address(this));
+    function _sellAvailableETH() internal {
+        if (address(this).balance > 0) {
+            _wrapEth();
+        }
 
-        _checkAllowance(address(curvePool), address(DAI), _daiBalance);
+        _sellWethForVST();
+    }
 
-        curvePool.exchange_underlying(
-            1, // from DAI index
-            0, // to LUSD index
-            _daiBalance, // amount
-            (_daiBalance * minExpectedSwapPercentageBips) / MAX_BPS // minDy
-        );
+    function _sellWethForVST() internal {
+        uint256 wethBalance = WETH.balanceOf(address(this));
+
+        if(wethBalance == 0) {
+            return;
+        }
+        _checkAllowance(address(balancerVault), address(WETH), wethBalance);
+
+        //Batch swap from WETH -> USDC -> VST
+        IBalancerVault.BatchSwapStep[] memory swaps = new IBalancerVault.BatchSwapStep[](2);
+
+        swaps[0] = IBalancerVault.BatchSwapStep(
+                wethUsdcPoolId,
+                0,
+                1,
+                wethBalance,
+                abi.encode(0)
+            );
+
+        swaps[1] = IBalancerVault.BatchSwapStep(
+                usdcVstPoolId,
+                1,
+                2,
+                0,
+                abi.encode(0)
+            );
+
+        IAsset[] memory assets = new IAsset[](3);
+        assets[0] = IAsset(address(WETH));
+        assets[1] = IAsset(usdc);
+        assets[2] = IAsset(address(want));
+
+        IBalancerVault.FundManagement memory fundManagement =
+            IBalancerVault.FundManagement(
+                address(this),
+                false,
+                payable(address(this)),
+                false
+            );
+        
+        int[] memory limits = new int[](3);
+        limits[0] = int(wethBalance);
+            
+        balancerVault.batchSwap(
+            IBalancerVault.SwapKind.GIVEN_IN, 
+            swaps, 
+            assets, 
+            fundManagement, 
+            limits, 
+            block.timestamp
+            );
+    }
+
+    function _wrapEth() internal {
+        WETH.deposit{ value: address(this).balance}();
     }
 
     // _checkAllowance adapted from https://github.com/therealmonoloco/liquity-stability-pool-strategy/blob/1fb0b00d24e0f5621f1e57def98c26900d551089/contracts/Strategy.sol#L316
@@ -303,12 +380,13 @@ contract Strategy is BaseStrategy {
         return want.balanceOf(address(this));
     }
 
-    function balanceOfLQTY() public view returns (uint256) {
-        return LQTY.balanceOf(address(this));
+    function balanceOfVSTA() public view returns (uint256) {
+        return VSTA.balanceOf(address(this));
     }
 
     function balanceOfPoolTokens() public view returns (uint256) {
-        return IERC20(address(bProtocolPool)).balanceOf(address(this)); // Pool is not fully ERC-20 compatible (there's no transfer function), but balanceOf should be fine.
+        // Pool is not fully ERC-20 compatible (there's no transfer function), but balanceOf should be fine.
+        return IERC20(address(bProtocolPool)).balanceOf(address(this)); 
     }
 
     function valueOfPoolTokens() public view returns (uint256) {
@@ -332,10 +410,10 @@ contract Strategy is BaseStrategy {
 
     // Returns the total amount of value, in want (LUSD), in the B.Protocol pool
     function totalValueInBProtocolPool() public view returns (uint256) {
-        uint256 _wantOwnedByBProtocolPool = liquityStabilityPool
-            .getCompoundedLUSDDeposit(address(bProtocolPool));
-        uint256 _ethOwnedByBProtocolPool = liquityStabilityPool
-            .getDepositorETHGain(address(bProtocolPool)) +
+        uint256 _wantOwnedByBProtocolPool = stabilityPool
+            .getCompoundedVSTDeposit(address(bProtocolPool));
+        uint256 _ethOwnedByBProtocolPool = stabilityPool
+            .getDepositorAssetGain(address(bProtocolPool)) +
             address(bProtocolPool).balance;
 
         return
@@ -353,7 +431,7 @@ contract Strategy is BaseStrategy {
         external
         onlyEmergencyAuthorized
     {
-        require(_minExpectedSwapPercentageBips <= MAX_BPS);
+        require(_minExpectedSwapPercentageBips <= MAX_BPS, "Thats to many bip's bruh");
         minExpectedSwapPercentageBips = _minExpectedSwapPercentageBips;
     }
 }

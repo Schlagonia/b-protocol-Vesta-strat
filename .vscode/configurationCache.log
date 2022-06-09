@@ -1,0 +1,1 @@
+{"buildTargets":["build","clean","snapshot","test","test-local","trace","trace-local","update"],"launchTargets":[],"customConfigurationProvider":{"workspaceBrowse":{"browsePath":[],"compilerArgs":[]},"fileIndex":[]}}

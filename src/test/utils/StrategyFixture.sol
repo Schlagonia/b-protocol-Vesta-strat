@@ -35,18 +35,18 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
     IERC20 public want;
 
     // NOTE: feel free change these vars to adjust for your strategy testing
-    IERC20 public constant DAI =
-        IERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F);
+    IERC20 public constant USDC =
+        IERC20(0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8);
     IERC20 public constant WETH =
-        IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
-    IERC20 public constant LUSD =
-        IERC20(0x5f98805A4E8be255a32880FDeC7F6728C6568bA0);
-    IERC20 public constant LQTY = 
-        IERC20(0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D);
+        IERC20(0x82aF49447D8a07e3bd95BD0d56f35241523fBab1);
+    IERC20 public constant VST =
+        IERC20(0x64343594Ab9b56e99087BfA6F2335Db24c2d1F17);
+    IERC20 public constant VSTA = 
+        IERC20(0xa684cd057951541187f288294a1e1C2646aA2d24);
 
-    address public constant bProtocolPool = 0x00FF66AB8699AAfa050EE5EF5041D1503aa0849a;
+    address public constant bProtocolPool = 0x12c60B3170Fb43E6A8f8ba2d843621c19324329E;
     
-    address public whale = 0x5f98805A4E8be255a32880FDeC7F6728C6568bA0; // OlympusDAO treasury
+    address public whale = 0x5F153A7d31b315167Fe41dA83acBa1ca7F86E91d; 
     address public user = address(1337);
     address public strategist = address(1);
     uint256 public constant WETH_AMT = 10**18;
@@ -58,7 +58,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         weth = WETH;
 
         // replace with your token
-        want = LUSD;
+        want = VST;
 
         deployVaultAndStrategy(
             address(want),
@@ -75,17 +75,17 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         // do here additional setup
         vm_std_cheats.label(address(vault), "Vault");
         vm_std_cheats.label(address(strategy), "Strategy");
-        vm_std_cheats.label(address(DAI), "DAI");
+        vm_std_cheats.label(address(USDC), "USDC");
         vm_std_cheats.label(address(WETH), "WETH");
         vm_std_cheats.label(address(want), "Want");
-        vm_std_cheats.label(address(LQTY), "LQTY");
+        vm_std_cheats.label(address(VSTA), "VSTA");
         vm_std_cheats.label(bProtocolPool, "B.Protocol");
-        vm_std_cheats.label(address(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419), "ChainlinkETHUSD");
-        vm_std_cheats.label(address(0x66017D22b0f8556afDd19FC67041899Eb65a21bb), "Liquity");
-        vm_std_cheats.label(address(0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA), "CurvePool");
-        vm_std_cheats.label(address(0xE592427A0AEce92De3Edee1F18E0157C05861564), "Uniswap");
-        vault.setDepositLimit(type(uint256).max);
-        tip(address(want), address(user), 100_000_000 ether);
+        //vm_std_cheats.label(address(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419), "ChainlinkETHUSD");
+        //vm_std_cheats.label(address(0x66017D22b0f8556afDd19FC67041899Eb65a21bb), "Liquity");
+        //vm_std_cheats.label(address(0xEd279fDD11cA84bEef15AF5D39BB4d4bEE23F0cA), "CurvePool");
+        //vm_std_cheats.label(address(0xE592427A0AEce92De3Edee1F18E0157C05861564), "Uniswap");
+        //vault.setDepositLimit(type(uint256).max);
+        tip(address(want), address(user), 100_000 ether);
         vm_std_cheats.deal(user, 10_000 ether);
 
         testSetupVaultOK();
@@ -150,6 +150,8 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
             _management
         );
 
+        vault.setDepositLimit(type(uint256).max);
+
         vm_std_cheats.prank(_strategist);
         _strategy = deployStrategy(_vault);
         strategy = Strategy(payable(_strategy));
@@ -161,7 +163,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
     }
 
     function testSetupVaultOK() internal {
-        console.log("address of vault", address(vault));
+        //console.log("address of vault", address(vault));
         assertTrue(address(0) != address(vault));
         assertEq(vault.token(), address(want));
         assertEq(vault.depositLimit(), type(uint256).max);
@@ -169,7 +171,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
 
     // TODO: add additional check on strat params
     function testSetupStrategyOK() internal {
-        console.log("address of strategy", address(strategy));
+        //console.log("address of strategy", address(strategy));
         assertTrue(address(0) != address(strategy));
         assertEq(address(strategy.vault()), address(vault));
     }
@@ -186,7 +188,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
     }
 
     function mockChainlink() internal {
-        AggregatorV3Interface chainlink = AggregatorV3Interface(0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419); // ETH/USD oracle that B.Protcol calls
+        AggregatorV3Interface chainlink = AggregatorV3Interface(0x190b8C66E8e1694Ae9Ff16170122Feb2D287820f); // ETH/USD oracle that B.Protcol calls
         (
             uint80 _roundId,
             int256 _answer,
