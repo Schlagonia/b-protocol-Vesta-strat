@@ -5,9 +5,9 @@ import "forge-std/console.sol";
 import {StrategyFixture} from "./utils/StrategyFixture.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import "../interfaces/Chainlink/AggregatorV3Interface.sol";
-import "../interfaces/BProtocol/IBAMM.sol";
-import {StrategyParams, IVault} from "../interfaces/Vault.sol";
+import "../../interfaces/Chainlink/AggregatorV3Interface.sol";
+import "../../interfaces/BProtocol/IBAMM.sol";
+import {StrategyParams, IVault} from "../../interfaces/Vault.sol";
 
 contract StrategyOperationsTest is StrategyFixture {
     function setUp() public override {
@@ -22,6 +22,8 @@ contract StrategyOperationsTest is StrategyFixture {
 
         skip(3 * ONE_MINUTE);
         strategy.harvest();
+    
+        assertEq(want.balanceOf(address(strategy)), 0);
         assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA); 
 
         skip(3 * ONE_MINUTE);
@@ -285,7 +287,7 @@ contract StrategyOperationsTest is StrategyFixture {
         vm_std_cheats.prank(0xC9032419AA502fAFA107775DCa8b7d07575d9DB5); //Vest Multisig
         VSTA.transfer(bProtocolPool, 10 ether);
 
-        skip(3 * ONE_MINUTE);
+        skip(300 * ONE_MINUTE);
         uint256 _amountToWithdraw = vault.balanceOf(user) / 2;
         vm_std_cheats.prank(user);
         vault.withdraw(_amountToWithdraw); // This should call liquidatePosition, which will get some ETH into the strat

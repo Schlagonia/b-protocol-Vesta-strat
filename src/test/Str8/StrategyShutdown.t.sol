@@ -4,7 +4,7 @@ import "forge-std/console.sol";
 
 import {StrategyFixture} from "./utils/StrategyFixture.sol";
 
-import "../interfaces/Chainlink/AggregatorV3Interface.sol";
+import "../../interfaces/Chainlink/AggregatorV3Interface.sol";
 
 contract StrategyShutdownTest is StrategyFixture {
     function setUp() public override {

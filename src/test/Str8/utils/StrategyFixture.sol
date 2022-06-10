@@ -7,13 +7,13 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {ExtendedDSTest} from "./ExtendedDSTest.sol";
 import {stdCheats} from "forge-std/stdlib.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {IVault} from "../../interfaces/Vault.sol";
+import {IVault} from "../../../interfaces/Vault.sol";
 import "forge-std/console.sol";
 
-import "../../interfaces/Chainlink/AggregatorV3Interface.sol";
+import "../../../interfaces/Chainlink/AggregatorV3Interface.sol";
 
 // NOTE: if the name of the strat or file changes this needs to be updated
-import {Strategy} from "../../Strategy.sol";
+import {Str8Vesta} from "../../../Str8Vesta.sol";
 
 // Artifact paths for deploying from the deps folder, assumes that the command is run from
 // the project root.
@@ -30,7 +30,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     IVault public vault;
-    Strategy public strategy;
+    Str8Vesta public strategy;
     IERC20 public weth;
     IERC20 public want;
 
@@ -45,6 +45,8 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
         IERC20(0xa684cd057951541187f288294a1e1C2646aA2d24);
 
     address public constant bProtocolPool = 0x12c60B3170Fb43E6A8f8ba2d843621c19324329E;
+
+    address public constant stabilityPool = 0x64cA46508ad4559E1fD94B3cf48f3164B4a77E42;
     
     address public whale = 0x5F153A7d31b315167Fe41dA83acBa1ca7F86E91d; 
     address public user = address(1337);
@@ -120,7 +122,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
 
     // Deploys a strategy
     function deployStrategy(address _vault) public returns (address) {
-        Strategy _strategy = new Strategy(_vault);
+        Str8Vesta _strategy = new Str8Vesta(_vault);
 
         return address(_strategy);
     }
@@ -154,7 +156,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
 
         vm_std_cheats.prank(_strategist);
         _strategy = deployStrategy(_vault);
-        strategy = Strategy(payable(_strategy));
+        strategy = Str8Vesta(payable(_strategy));
 
         vm_std_cheats.prank(_strategist);
         strategy.setKeeper(_keeper);
@@ -172,6 +174,7 @@ contract StrategyFixture is ExtendedDSTest, stdCheats {
     // TODO: add additional check on strat params
     function testSetupStrategyOK() internal {
         //console.log("address of strategy", address(strategy));
+        //console.log("Max single invest ", strategy.maxSingleInvest());
         assertTrue(address(0) != address(strategy));
         assertEq(address(strategy.vault()), address(vault));
     }

@@ -10,19 +10,17 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20Extended} from "./interfaces/IERC20Extended.sol";
 
-import "./interfaces/BProtocol/IBAMM.sol";
 import "./interfaces/Vesta/IStabilityPool.sol";
+import "./interfaces/Chainlink/AggregatorV3Interface.sol";
 import "./interfaces/Balancer/IBalancerVault.sol";
 import "./interfaces/Balancer/IBalancerPool.sol";
 import "./interfaces/Balancer/IAsset.sol";
 import "./interfaces/WETH/IWETH9.sol";
 
-contract Strategy is BaseStrategy {
+contract Str8Vesta is BaseStrategy {
     using SafeERC20 for IERC20;
     using Address for address;
 
-    IBAMM public constant bProtocolPool =
-        IBAMM(0x12c60B3170Fb43E6A8f8ba2d843621c19324329E);
     IStabilityPool public constant stabilityPool =
         IStabilityPool(0x64cA46508ad4559E1fD94B3cf48f3164B4a77E42); 
 
@@ -36,6 +34,8 @@ contract Strategy is BaseStrategy {
 
     IBalancerVault internal constant balancerVault =
         IBalancerVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
+
+    AggregatorV3Interface internal constant priceFeed = AggregatorV3Interface(0x190b8C66E8e1694Ae9Ff16170122Feb2D287820f);
     
     address public constant vstaPool = address(0xC61ff48f94D801c1ceFaCE0289085197B5ec44F0);
     bytes32 public immutable vstaPoolId;
@@ -53,13 +53,13 @@ contract Strategy is BaseStrategy {
 
     uint256 private immutable wantDecimals;
     uint256 private immutable minWant;
-    uint256 private immutable maxSingleInvest;
+    uint256 public immutable maxSingleInvest;
 
     constructor(address _vault) BaseStrategy(_vault) {
         // Allow .5% slippage by default
         minExpectedSwapPercentageBips = 9950;
 
-        want.safeApprove(address(bProtocolPool), type(uint256).max); // All want will be in pool, so this doesn't add sec risk
+        want.safeApprove(address(stabilityPool), type(uint256).max); // All want will be in pool, so this doesn't add sec risk
 
         vstaPoolId = IBalancerPool(vstaPool).getPoolId();
         wethUsdcPoolId = IBalancerPool(wethUsdcPool).getPoolId();
@@ -72,7 +72,7 @@ contract Strategy is BaseStrategy {
     }
 
     function name() external pure override returns (string memory) {
-        return "StrategyBProtocolVestaVST";
+        return "Str8VestaVST";
     }
 
     // B.Protocol needs to send ETH to strat
@@ -80,7 +80,7 @@ contract Strategy is BaseStrategy {
 
     function estimatedTotalAssets() public view override returns (uint256) {
         unchecked {
-            return balanceOfWant() + valueOfPoolTokens();
+            return balanceOfWant() + vstStaked() + availableEthTowant();
         }
     }
 
@@ -95,17 +95,27 @@ contract Strategy is BaseStrategy {
             unchecked {
                 return estimateAssets - debt;
             }
-
         }
     }
 
-    //All funds are removed on prepare Return and not deposited back in so _debtOutstanding should never be > balanceOfWant()
     function adjustPosition(uint256 _debtOutstanding) internal override {
-        uint256 _liquidWant = balanceOfWant();
-
-        if (_liquidWant > _debtOutstanding) {
-            depositSome(_liquidWant - _debtOutstanding);
+        if (emergencyExit) {
+            return;
         }
+
+        //we are spending all our cash unless we have debt outstanding
+        uint256 _wantBal = want.balanceOf(address(this));
+        if (_wantBal < _debtOutstanding) {
+            withdrawSome(_debtOutstanding - _wantBal);
+            return;
+        }
+
+        // send all of our want tokens to be deposited
+        uint256 toInvest = _wantBal - _debtOutstanding;
+
+        uint256 _wantToInvest = Math.min(toInvest, maxSingleInvest);
+        // deposit and stake
+        depositSome(_wantToInvest);
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -123,22 +133,52 @@ contract Strategy is BaseStrategy {
 
         // Liquidate position so that everything is in want
         //Rewards are payed out based on amount withdrawn so this is the best way to get all rewards to the strat
-        liquidateAllPositions();
+        harvester();
 
-        // Run profit, loss, & debt payment calcs
-        uint256 _totalAssets = balanceOfWant();
-        uint256 _totalDebt = vault.strategies(address(this)).totalDebt;
+        //get base want balance
+        uint256 wantBalance = want.balanceOf(address(this));
 
-        unchecked {
-            
-            if (_totalAssets >= _totalDebt) {
-                _debtPayment = _debtOutstanding;
-                _profit = _totalAssets - _totalDebt;
+        uint256 balance = wantBalance + vstStaked();
+
+        //get amount given to strat by vault
+        uint256 debt = vault.strategies(address(this)).totalDebt;
+
+        //Check to see if there is nothing invested
+        if (balance == 0 && debt == 0) {
+            return (_profit, _loss, _debtPayment);
+        }
+
+        //Balance - Total Debt is profit
+        if (balance >= debt) {
+            _profit = balance - debt;
+
+            uint256 needed = _profit + _debtOutstanding;
+            if (needed > wantBalance) {
+                withdrawSome(needed - wantBalance);
+
+                wantBalance = want.balanceOf(address(this));
+
+                if (wantBalance < needed) {
+                    if (_profit >= wantBalance) {
+                        _profit = wantBalance;
+                        _debtPayment = 0;
+                    } else {
+                        _debtPayment = Math.min((wantBalance - _profit), _debtOutstanding);
+                    }
+                } else {
+                    _debtPayment = _debtOutstanding;
+                }
             } else {
-                _debtPayment = Math.min(_debtOutstanding, _totalAssets);
-
-                _loss = _totalDebt - _totalAssets;
+                _debtPayment = _debtOutstanding;
             }
+        } else {
+            _loss = debt - balance;
+            if (_debtOutstanding > wantBalance) {
+                withdrawSome(_debtOutstanding - wantBalance);
+                wantBalance = want.balanceOf(address(this));
+            }
+
+            _debtPayment = Math.min(wantBalance, _debtOutstanding);
         }
     }
 
@@ -176,7 +216,9 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256 _amountFreed)
     {
-        bProtocolPool.withdraw(balanceOfPoolTokens());
+        if(vstStaked() > 0){ 
+            stabilityPool.withdrawFromSP(type(uint256).max);
+        }
 
         // Claim & sell any VSTA & ETH.
         _sellAvailableRewards();
@@ -201,42 +243,44 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256)
     {
-        return (_amtInWei * ethPrice()) / 1e18; // Assumes that 1 LUSD = 1 USD
+        return (_amtInWei * getWethPrice()) / 1e18; // Assumes that 1 VST = 1 USD
     }
 
     // ---------- HELPER & UTILITY FUNCTIONS ------------
 
-    function toShares(uint256 _amount) public view returns (uint256) {
-        uint256 _wantOwnedByBProtocolPool = stabilityPool.getCompoundedVSTDeposit(address(bProtocolPool));
-
-        uint256 total = IERC20(address(bProtocolPool)).totalSupply();
-
-        return (_amount * total) / _wantOwnedByBProtocolPool;
+    function vstStaked() public view returns(uint256) {
+        return stabilityPool.getCompoundedVSTDeposit(address(this));
     }
-
+    
     function depositSome(uint256 _amount) internal {
         if (_amount < minWant) {
             return;
         }
 
-        bProtocolPool.deposit(_amount);
+        stabilityPool.provideToSP(_amount);
     }
-    
+
     function withdrawSome(uint256 _amount) internal {
         if(_amount == 0) {
             return;
         }
 
-        uint256 shares = toShares(_amount);
-
-        //If we dont have enough shares we may be able to sell seized token or rewards to account for it
-        if(shares > balanceOfPoolTokens()) {
+        //If we dont have enough staked we may be able to sell seized token or rewards to account for it
+        if(_amount > vstStaked()) {
             liquidateAllPositions();
             return;
         }
 
-        bProtocolPool.withdraw(shares);
-        
+        stabilityPool.withdrawFromSP(_amount);
+    }
+
+    function harvester() internal {
+        if(vstStaked() == 0) {
+            return;
+        }
+
+        stabilityPool.withdrawFromSP(0);
+        _sellAvailableRewards();
     }
 
     //Only gets called after all positions have been withdrawn previously
@@ -384,41 +428,23 @@ contract Strategy is BaseStrategy {
         return VSTA.balanceOf(address(this));
     }
 
-    function balanceOfPoolTokens() public view returns (uint256) {
-        // Pool is not fully ERC-20 compatible (there's no transfer function), but balanceOf should be fine.
-        return IERC20(address(bProtocolPool)).balanceOf(address(this)); 
+    function availableEthTowant() public view returns (uint256) {
+        uint256 availableEth = address(this).balance + stabilityPool.getDepositorAssetGain(address(this));
+
+        return ethToWant(availableEth);
     }
+ 
+    //return price of eth based on oracle call
+    function getWethPrice() internal view returns(uint256) {
+        (
+            /*uint80 roundID*/,
+            int price,
+            /*uint startedAt*/,
+            /*uint timeStamp*/,
+            /*uint80 answeredInRound*/
+        ) = priceFeed.latestRoundData();
 
-    function valueOfPoolTokens() public view returns (uint256) {
-        uint256 _poolTokenBalance = balanceOfPoolTokens();
-
-        uint256 _valuePerPoolToken = wantValuePerPoolToken();
-
-        return (_poolTokenBalance * _valuePerPoolToken) / 1e18;
-    }
-
-    function wantValuePerPoolToken() public view returns (uint256) {
-        return
-            (totalValueInBProtocolPool() * 1e18) /
-            IERC20(address(bProtocolPool)).totalSupply();
-    }
-
-    function ethPrice() public view returns (uint256 _ethPrice) {
-        _ethPrice = bProtocolPool.fetchPrice();
-        require(_ethPrice > 0, "!oracle_working");
-    }
-
-    // Returns the total amount of value, in want (LUSD), in the B.Protocol pool
-    function totalValueInBProtocolPool() public view returns (uint256) {
-        uint256 _wantOwnedByBProtocolPool = stabilityPool
-            .getCompoundedVSTDeposit(address(bProtocolPool));
-        uint256 _ethOwnedByBProtocolPool = stabilityPool
-            .getDepositorAssetGain(address(bProtocolPool)) +
-            address(bProtocolPool).balance;
-
-        return
-            _wantOwnedByBProtocolPool +
-            ((_ethOwnedByBProtocolPool * ethPrice()) / 1e18);
+        return uint256(price) * 1 ether / (10 ** priceFeed.decimals());
     }
 
     // ------------ MANAGEMENT FUNCTIONS -------------

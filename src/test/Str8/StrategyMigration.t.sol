@@ -4,7 +4,7 @@ pragma solidity ^0.8.12;
 import {StrategyFixture} from "./utils/StrategyFixture.sol";
 
 // NOTE: if the name of the strat or file changes this needs to be updated
-import {Strategy} from "../Strategy.sol";
+import {Str8Vesta} from "../../Str8Vesta.sol";
 
 contract StrategyMigrationTest is StrategyFixture {
     function setUp() public override {
@@ -21,6 +21,7 @@ contract StrategyMigrationTest is StrategyFixture {
         vault.deposit(_amount);
         skip(1);
         strategy.harvest();
+        assertEq(want.balanceOf(address(strategy)), 0);
         assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, ONE_BIP_REL_DELTA);
 
         // Migrate to a new strategy
@@ -28,7 +29,7 @@ contract StrategyMigrationTest is StrategyFixture {
         address newStrategyAddr = deployStrategy(address(vault));
         vault.migrateStrategy(address(strategy), newStrategyAddr);
         assertRelApproxEq(
-            Strategy(payable(newStrategyAddr)).estimatedTotalAssets(),
+            Str8Vesta(payable(newStrategyAddr)).estimatedTotalAssets(),
             _amount,
             ONE_BIP_REL_DELTA
         );
