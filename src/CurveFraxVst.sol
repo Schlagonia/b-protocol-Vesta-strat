@@ -2,7 +2,7 @@
 // Feel free to change the license, but this is what we use
 pragma solidity ^0.8.12;
 pragma experimental ABIEncoderV2;
-
+import "forge-std/console.sol";
 // These are the core Yearn libraries
 import {BaseStrategy, StrategyParams} from "@yearnvaults/contracts/BaseStrategy.sol";
 
@@ -13,9 +13,9 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC20Extended} from "./interfaces/IERC20Extended.sol";
 
 import { ICurveFi } from "./interfaces/Curve/ICurveFi.sol";
-import "./interfaces/Balancer/IBalancerVault.sol";
-import "./interfaces/Balancer/IBalancerPool.sol";
-import "./interfaces/Balancer/IAsset.sol";
+import {IBalancerVault} from "./interfaces/Balancer/IBalancerVault.sol";
+import { IBalancerPool } from "./interfaces/Balancer/IBalancerPool.sol";
+import { IAsset } from "./interfaces/Balancer/IAsset.sol";
 import { IUniswapV2Router02 } from "./interfaces/Uni/IUniswapV2Router02.sol";
 import { IStaker } from "./interfaces/Frax/IStaker.sol";
 import "./interfaces/WETH/IWETH9.sol";
@@ -23,9 +23,6 @@ import "./interfaces/WETH/IWETH9.sol";
 contract CurveFraxVst is BaseStrategy {
     using SafeERC20 for IERC20;
     using Address for address;
-
-    uint256 public minExpectedSwapPercentageBips = 9950;
-    uint256 internal constant FEE_DENOMINATOR = 10000; // this means all of our fee values are in basis points
 
     //LP Tokens
     IERC20 public constant VST =
@@ -46,20 +43,27 @@ contract CurveFraxVst is BaseStrategy {
     address internal constant usdc =
         address(0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8);
 
+    //Balancer addresses for VSTA swaps
     IBalancerVault internal constant balancerVault =
         IBalancerVault(0xBA12222222228d8Ba445958a75a0704d566BF2C8);
-    address public constant vstaPool = address(0xC61ff48f94D801c1ceFaCE0289085197B5ec44F0);
+
+    address constant vstaPool = address(0xC61ff48f94D801c1ceFaCE0289085197B5ec44F0);
     bytes32 public immutable vstaPoolId;
-    address public constant wethUsdcPool = address(0x64541216bAFFFEec8ea535BB71Fbc927831d0595);
+    address constant wethUsdcPool = address(0x64541216bAFFFEec8ea535BB71Fbc927831d0595);
     bytes32 public immutable wethUsdcPoolId;
-    address public constant usdcVstPool = address(0x5A5884FC31948D59DF2aEcCCa143dE900d49e1a3);
+    address constant usdcVstPool = address(0x5A5884FC31948D59DF2aEcCCa143dE900d49e1a3);
     bytes32 public immutable usdcVstPoolId;
 
+    //Frax addresses and variables for staking
     IStaker public constant staker =
         IStaker(0x127963A74c07f72D862F2Bdc225226c3251BD117);
     //Need for staking. Locks the tokens for the minumum amount of time.
     uint256 public minLockTime; 
 
+    IUniswapV2Router02 public constant fraxRouter =
+        IUniswapV2Router02(0xc2544A32872A91F4A553b404C6950e89De901fdb);
+
+    //Curve pool and indexs
     ICurveFi public constant curvePool =
         ICurveFi(0x59bF0545FCa0E5Ad48E13DA269faCD2E8C886Ba4);
     
@@ -70,10 +74,14 @@ contract CurveFraxVst is BaseStrategy {
     
     bool internal forceHarvestTriggerOnce; // only set this to true externally when we want to trigger our keepers to harvest for us
     uint256 public creditThreshold; // amount of credit in underlying tokens that will automatically trigger a harvest
+    uint256 public lastDeposit = 0;
 
     uint256 private immutable wantDecimals;
     uint256 private immutable minWant;
     uint256 public immutable maxSingleInvest;
+
+    //needed for swaps not to fail
+    uint256 public minVsta = 1e15;
 
     constructor(address _vault) BaseStrategy(_vault) {
         require(staker.stakingToken() == want, "Wrong want for staker");
@@ -98,14 +106,14 @@ contract CurveFraxVst is BaseStrategy {
 
         //approve both underlying tokens to curve Pool
         VST.safeApprove(address(curvePool), type(uint256).max);
-        FXS.safeApprove(address(curvePool), type(uint256).max);
+        FRAX.safeApprove(address(curvePool), type(uint256).max);
     }
 
     // ******** OVERRIDE THESE METHODS FROM BASE CONTRACT ************
 
     function name() external pure override returns (string memory) {
         // Add your own name here, suggestion e.g. "StrategyCreamYFI"
-        return "Strategy<ProtocolName><TokenType>";
+        return "VstFraxStaker";
     }
 
     function balanceOfWant() public view returns (uint256) {
@@ -188,9 +196,14 @@ contract CurveFraxVst is BaseStrategy {
         }
 
         //we are spending all our cash unless we have debt outstanding
-        uint256 _wantBal = want.balanceOf(address(this));
+        uint256 _wantBal = balanceOfWant();
         if (_wantBal < _debtOutstanding) {
             withdrawSome(_debtOutstanding - _wantBal);
+            _wantBal = balanceOfWant();
+            //An entire Kek must be removed for any withdraws so its likely we will over withdraw and need to reinvest the extra
+            if(_wantBal > _debtOutstanding + minWant) {
+                depositSome(_wantBal - _debtOutstanding);
+            }
             return;
         }
 
@@ -234,6 +247,7 @@ contract CurveFraxVst is BaseStrategy {
         }
 
         staker.stakeLocked(_amount, minLockTime);
+        lastDeposit = block.timestamp;
     }
 
     function withdrawSome(uint256 _amount) internal {
@@ -245,36 +259,42 @@ contract CurveFraxVst is BaseStrategy {
 
         uint256 i =0;
         uint256 needed = _amount;
-        while(needed < _amount && i < stakes.length) {
+        while(needed > 0 && i < stakes.length) {
             IStaker.LockedStake memory stake = stakes[i];
             uint256 liquidity = stake.amount;
-
-            if(liquidity > 0) {
+         
+            if(liquidity > 0 && stake.ending_timestamp <= block.timestamp) {
+      
                 staker.withdrawLocked(stake.kek_id);
-            }
 
-            if(liquidity < needed) {
-                unchecked {
-                    needed -= liquidity;
-                    i ++;
+                if(liquidity < needed) {
+                    unchecked {
+                        needed -= liquidity;
+                        i ++;
+                    }
+                } else {
+                    break;
                 }
+                
             } else {
-                break;
+                i++;
             }
         }
+   
     }
 
     function harvester() internal {
+
         if(staker.lockedLiquidityOf(address(this)) > 0) {
             staker.getReward();
-
         }
         
         swapFxsToFrax();
         swapVstaToVst();
 
         addCurveLiquidity();
-
+     
+        
     }
 
     function swapFxsToFrax() internal {
@@ -284,16 +304,31 @@ contract CurveFraxVst is BaseStrategy {
         }
 
         ///Swap to FRAX
+        _checkAllowance(address(fraxRouter), address(FXS), fxsBal);
+
+        address[] memory path = new address[](2);
+        path[0] = address(FXS);
+        path[1] = address(FRAX);
+
+        fraxRouter.swapExactTokensForTokens(
+            fxsBal, 
+            0, 
+            path, 
+            address(this), 
+            block.timestamp
+            );
     }
 
     function swapVstaToVst() internal {
+    
         _sellVSTAforWeth();
         _sellWethForVST();
     }
 
     function _sellVSTAforWeth() internal {
         uint256 _amountToSell = VSTA.balanceOf(address(this));
-        if(_amountToSell == 0) {
+   
+        if(_amountToSell < minVsta) {
             return;
         }
 
@@ -334,7 +369,7 @@ contract CurveFraxVst is BaseStrategy {
 
     function _sellWethForVST() internal {
         uint256 wethBalance = WETH.balanceOf(address(this));
-
+ 
         if(wethBalance == 0) {
             return;
         }
@@ -362,7 +397,7 @@ contract CurveFraxVst is BaseStrategy {
         IAsset[] memory assets = new IAsset[](3);
         assets[0] = IAsset(address(WETH));
         assets[1] = IAsset(usdc);
-        assets[2] = IAsset(address(want));
+        assets[2] = IAsset(address(VST));
 
         IBalancerVault.FundManagement memory fundManagement =
             IBalancerVault.FundManagement(
@@ -392,7 +427,7 @@ contract CurveFraxVst is BaseStrategy {
         if(fraxBal == 0 && vstBal == 0) {
             return;
         }
-
+    
         uint256[2] memory amounts;
         amounts[fraxIndex] = fraxBal;
         amounts[vstIndex] = vstBal;
@@ -417,39 +452,42 @@ contract CurveFraxVst is BaseStrategy {
         }
     }
 
+    //Will liquidate as much as possible at the time. May not be able to liquidate all if anything has been deposited in the last day
+    // Would then have to be called again after locked period has expired
     function liquidateAllPositions() internal override returns (uint256) {
-        // TODO: Liquidate all positions and return the amount freed.
-        return want.balanceOf(address(this));
+   
+        withdrawSome(type(uint256).max);
+        harvester();
+        return balanceOfWant();
     }
 
-    // NOTE: Can override `tendTrigger` and `harvestTrigger` if necessary
-    // solhint-disable-next-line no-empty-blocks
     function prepareMigration(address _newStrategy) internal override {
-        // TODO: Transfer any non-`want` tokens to the new strategy
-        // NOTE: `migrate` will automatically forward all `want` in this strategy to the new one
+        require(lastDeposit + minLockTime >= block.timestamp, "Lastest deposit is not avialable yet for withdraw");
+        withdrawSome(type(uint256).max);
+    
+        uint256 fxsBal = FXS.balanceOf(address(this));
+        if(fxsBal > 0 ) {
+            FXS.safeTransfer(_newStrategy, fxsBal);
+        }
+        uint256 vstaBal = VSTA.balanceOf(address(this));
+        if(vstaBal > 0) {
+            VSTA.safeTransfer(_newStrategy, vstaBal);
+        }
     }
 
-    // Override this to add all tokens/tokenized positions this contract manages
-    // on a *persistent* basis (e.g. not just for swapping back to want ephemerally)
-    // NOTE: Do *not* include `want`, already included in `sweep` below
-    //
-    // Example:
-    //
-    //    function protectedTokens() internal override view returns (address[] memory) {
-    //      address[] memory protected = new address[](3);
-    //      protected[0] = tokenA;
-    //      protected[1] = tokenB;
-    //      protected[2] = tokenC;
-    //      return protected;
-    //    }
     function protectedTokens()
         internal
-        view
+        pure
         override
         returns (address[] memory)
-    // solhint-disable-next-line no-empty-blocks
     {
+        address[] memory protected = new address[](4);
+        protected[0] = address(VST);
+        protected[1] = address(FRAX);
+        protected[2] = address(VSTA);
+        protected[3] = address(FXS);
 
+        return protected;
     }
 
     /**
@@ -476,4 +514,5 @@ contract CurveFraxVst is BaseStrategy {
         // TODO create an accurate price oracle
         return _amtInWei;
     }
+
 }
