@@ -136,7 +136,7 @@ contract StrategyOperationsTest is StrategyFixture {
 
         assertGt(address(strategy).balance, 0);
 
-        strategy.sellAvailableETH();
+        strategy.sellAvailableCollateral();
         assertEq(address(strategy).balance, 0);
         assertGt(strategy.estimatedTotalAssets(), _strategyAssetsBeforeETH / 2);
         

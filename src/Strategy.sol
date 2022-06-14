@@ -26,6 +26,8 @@ contract Strategy is BaseStrategy {
     IStabilityPool public constant stabilityPool =
         IStabilityPool(0x64cA46508ad4559E1fD94B3cf48f3164B4a77E42); 
 
+    address public collateralToken;
+
     IERC20 internal constant VSTA =
         IERC20(0xa684cd057951541187f288294a1e1C2646aA2d24);
     IWETH9 internal constant WETH =
@@ -176,7 +178,9 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256 _amountFreed)
     {
-        bProtocolPool.withdraw(balanceOfPoolTokens());
+        if(balanceOfPoolTokens() > 0) {
+            bProtocolPool.withdraw(balanceOfPoolTokens());
+        }
 
         // Claim & sell any VSTA & ETH.
         _sellAvailableRewards();
@@ -247,11 +251,27 @@ contract Strategy is BaseStrategy {
             _sellVSTAforWeth();
         }
 
-        _sellAvailableETH(); //Converts all ETH -> WETH -> USDC -> VST
+        if(collateralToken == address(0)) {
+            if(address(this).balance > 0) {
+                _wrapEth();
+            }
+        } else {
+            convertCollateralToWeth();
+        }
+
+        _sellWethForVST(); //Converts all ETH -> WETH -> USDC -> VST
     }
 
-    function sellAvailableETH() external onlyVaultManagers {
-        _sellAvailableETH();
+    function sellAvailableCollateral() external onlyVaultManagers {
+        if(collateralToken == address(0)) {
+            if(address(this).balance > 0) {
+                _wrapEth();
+            }
+        } else {
+            convertCollateralToWeth();
+        }
+
+        _sellWethForVST(); 
     }
 
     function _sellVSTAforWeth() internal {
@@ -290,14 +310,6 @@ contract Strategy is BaseStrategy {
             block.timestamp
         );
         
-    }
-
-    function _sellAvailableETH() internal {
-        if (address(this).balance > 0) {
-            _wrapEth();
-        }
-
-        _sellWethForVST();
     }
 
     function _sellWethForVST() internal {
@@ -351,6 +363,18 @@ contract Strategy is BaseStrategy {
             limits, 
             block.timestamp
             );
+    }
+
+    function convertCollateralToWeth() internal {
+        uint256 amount = IERC20(collateralToken).balanceOf(address(this));
+
+        if(amount == 0) {
+            return;
+        }
+
+        //Implement token specific logic to swap to Weth
+        
+
     }
 
     function _wrapEth() internal {
